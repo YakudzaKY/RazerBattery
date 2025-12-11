@@ -110,6 +110,47 @@ void RazerManager::AddDevice(const std::wstring& path) {
             return;
         }
 
+        // IMPORTANT: Verify the interface really works before adding it.
+        // Some devices expose multiple "Generic Desktop" interfaces, but only one is the control interface.
+        // If we add all of them, we get duplicate tray icons (some working, some not).
+        int level = device->GetBatteryLevel();
+
+        // If level is -1, it means the device didn't respond correctly to the Razer protocol.
+        // If it was a standard "Vendor" interface (UsagePage >= 0xFF00), we might want to keep it and show "Unknown" (maybe it's just asleep).
+        // BUT if it was a "Generic" interface (UsagePage 0x1), we MUST be strict, otherwise we pick up mouse/keyboard interfaces that don't talk Razer protocol.
+
+        // We can't easily check UsagePage here without exposing it or calling IsRazerControlInterface again/modifying it.
+        // But IsRazerControlInterface is simple. Let's trust GetBatteryLevel result for filtering "Generic" interfaces.
+
+        // Actually, let's just use the battery level check as the definitive "Is this a Razer Control Interface?" check.
+        // The only risk is if a valid device is asleep and returns -1, we might skip it.
+        // However, Razer devices usually respond to the battery check even if asleep (or wake up).
+        // Or if they return -2 (Read Only), we should keep them.
+
+        if (level == -1) {
+             // Failed to get battery.
+             // If this interface looks like a generic system interface (e.g. UsagePage 1), we should probably skip it to avoid clutter.
+             // But if it's explicitly Vendor Defined (0xFF00), we might want to see the error.
+             // For now, to solve the "Headset Unknown" (BlackShark) issue AND the "DeathAdder not found" (0x00B7 hidden interface) issue:
+
+             // The DeathAdder 0x00B7 likely has a hidden interface on UsagePage 1.
+             // If we now allow UsagePage 1, we will get 4+ candidates. 3 of them will fail GetBatteryLevel. 1 will succeed.
+             // So we should SKIP if level == -1.
+
+             // The BlackShark 0x0555 has a Vendor interface. It failed GetBatteryLevel before.
+             // If we skip it now, the user won't see "Headset Unknown", they will see nothing.
+             // Which is arguably better than a broken icon, OR worse if it means we hide a device that just needs a retry.
+
+             // However, since we added 0x0555 to the transaction ID list, it SHOULD work now.
+             // So skipping on failure is safe for now to avoid duplicates for the DeathAdder.
+
+             // One edge case: Device is truly broken/locked. We won't see it.
+             // But better than seeing 4 broken icons.
+
+             Logger::Instance().Log(L"Device connected but GetBatteryLevel failed (skipping): " + path);
+             return;
+        }
+
         m_devices[path] = device;
 
         // Create an icon for it
@@ -117,21 +158,14 @@ void RazerManager::AddDevice(const std::wstring& path) {
         auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
         m_icons[path] = icon;
 
-        // Try to get battery to verify it supports the protocol
-        int level = device->GetBatteryLevel();
+        std::wstringstream ss;
+        ss << L"Device connected and verified. Battery: " << level;
+        Logger::Instance().Log(ss.str());
 
-        if (level != -1) {
-            std::wstringstream ss;
-            ss << L"Device connected and verified. Battery: " << level;
-            Logger::Instance().Log(ss.str());
+        // Initial update
+        int charging = device->GetChargingStatus();
+        icon->Update(device->GetDeviceType(), level, charging == 1);
 
-            // Initial update
-            int charging = device->GetChargingStatus();
-            icon->Update(device->GetDeviceType(), level, charging == 1);
-        } else {
-             Logger::Instance().Log(L"Device connected but GetBatteryLevel failed: " + path);
-             icon->Update(device->GetDeviceType(), -1, false);
-        }
     } else {
          Logger::Instance().Log(L"Failed to connect to device: " + path);
     }
