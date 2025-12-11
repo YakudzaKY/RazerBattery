@@ -156,6 +156,7 @@ unsigned char RazerDevice::GetTransactionID() const {
         case 0x00C7: // Pro Click V2 Vertical Edition Wired
         case 0x00D0: // Pro Click V2 Wired
         case 0x00D1: // Pro Click V2 Wireless
+        case 0x0555: // BlackShark V2 2023 (Assumed)
             return 0x1F;
 
         // 0xFF Devices
@@ -314,6 +315,7 @@ std::wstring RazerDevice::GetDeviceType() const {
         case 0x0527: // Kraken Ultimate
         case 0x0535: // Kraken Kitty V2
         case 0x051A: // Barracuda X
+        case 0x0555: // BlackShark V2 2023
             return L"Headset";
 
         // Keyboards (Examples)
