@@ -3,7 +3,6 @@
 #include <windows.h>
 #include <dbt.h>
 #include <map>
-#include <set>
 #include <string>
 #include <memory>
 #include "RazerDevice.h"
