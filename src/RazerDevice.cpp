@@ -1,6 +1,9 @@
 #include "RazerDevice.h"
+#include "Logger.h"
 #include <iostream>
 #include <vector>
+#include <sstream>
+#include <hidpi.h>
 
 // Helper to calculate CRC
 unsigned char RazerDevice::CalculateCRC(const RazerReport& report) {
@@ -53,6 +56,10 @@ bool RazerDevice::Connect() {
     );
 
     if (m_hDevice == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        std::wstringstream ss;
+        ss << L"CreateFile failed. Error: " << err << L" Path: " << m_devicePath;
+        Logger::Instance().Log(ss.str());
         return false;
     }
 
@@ -66,6 +73,7 @@ bool RazerDevice::Connect() {
             return false;
         }
     } else {
+        Logger::Instance().Log("HidD_GetAttributes failed");
         CloseHandleSafe();
         return false;
     }
@@ -90,62 +98,83 @@ unsigned short RazerDevice::GetPID() const {
 }
 
 unsigned char RazerDevice::GetTransactionID() const {
-    // Logic derived from razermouse_driver.c
-    // Most new devices use 0x1f
-    // Some use 0x3f
-    // Older ones 0xFF
-
-    // Simplified mapping based on common devices.
-    // Ideally this should be a comprehensive lookup.
-
+    // Comprehensive list based on OpenRazer driver
     switch (m_pid) {
-        // 0x1F Devices (Newer)
-        case 0x00B6: // Basilisk V3 Pro Wired
-        case 0x00B7: // Basilisk V3 Pro Wireless
-        case 0x007C: // Naga Pro Wired
-        case 0x007D: // Naga Pro Wireless
-        case 0x0093: // DeathAdder V3 Pro Wireless
-        case 0x0094: // DeathAdder V3 Pro Wired
-        case 0x00A5: // Viper V2 Pro Wired
-        case 0x00A6: // Viper V2 Pro Wireless
-        case 0x00AB: // Cobra Pro Wireless
-        case 0x00AC: // Cobra Pro Wired
-            return 0x1F;
-
         // 0x3F Devices
-        case 0x006C: // Lancehead Wired
-        case 0x006D: // Lancehead Wireless
-        case 0x006E: // Lancehead TE Wired
-        case 0x006F: // Lancehead Wireless Receiver
-        case 0x0064: // Basilisk
-        case 0x0084: // DeathAdder V2
-        case 0x0070: // Mamba Wireless Receiver
-        case 0x0085: // DeathAdder V2 Pro Wired
-        case 0x0086: // DeathAdder V2 Pro Wireless
+        case 0x0059: // Lancehead Wired
+        case 0x005A: // Lancehead Wireless
+        case 0x0072: // Mamba Wireless Receiver
+        case 0x0073: // Mamba Wireless Wired
+        case 0x007C: // DeathAdder V2 Pro Wired
+        case 0x007D: // DeathAdder V2 Pro Wireless
             return 0x3F;
 
+        // 0x1F Devices
+        case 0x008F: // Naga Pro Wired
+        case 0x0090: // Naga Pro Wireless
+        case 0x0088: // Basilisk Ultimate Receiver
+        case 0x0086: // Basilisk Ultimate Wired
+        case 0x006F: // Lancehead Wireless Receiver
+        case 0x0070: // Lancehead Wireless Wired
+        case 0x0062: // Atheris Receiver
+        case 0x0094: // Orochi V2 Receiver
+        case 0x0095: // Orochi V2 Bluetooth
+        case 0x0077: // Pro Click Receiver
+        case 0x0080: // Pro Click Wired
+        case 0x009C: // DeathAdder V2 X HyperSpeed
+        case 0x00A6: // Viper V2 Pro Wireless
+        case 0x00A5: // Viper V2 Pro Wired
+        case 0x009E: // Viper Mini SE Wired
+        case 0x009F: // Viper Mini SE Wireless
+        case 0x00B0: // Cobra Pro Wireless
+        case 0x00AF: // Cobra Pro Wired
+        case 0x00B7: // DeathAdder V3 Pro Wireless
+        case 0x00B6: // DeathAdder V3 Pro Wired
+        case 0x00C3: // DeathAdder V3 Pro Wireless Alt
+        case 0x00C2: // DeathAdder V3 Pro Wired Alt
+        case 0x00C4: // DeathAdder V3 HyperSpeed Wired
+        case 0x00C5: // DeathAdder V3 HyperSpeed Wireless
+        case 0x00B3: // HyperPolling Wireless Dongle
+        case 0x00AA: // Basilisk V3 Pro Wired
+        case 0x00AB: // Basilisk V3 Pro Wireless
+        case 0x00CB: // Basilisk V3 35K
+        case 0x00CC: // Basilisk V3 Pro 35K Wired
+        case 0x00CD: // Basilisk V3 Pro 35K Wireless
+        case 0x00D6: // Basilisk V3 Pro 35K Phantom Green Edition Wired
+        case 0x00D7: // Basilisk V3 Pro 35K Phantom Green Edition Wireless
+        case 0x009A: // Pro Click Mini Receiver
+        case 0x00A7: // Naga V2 Pro Wired
+        case 0x00A8: // Naga V2 Pro Wireless
+        case 0x00B4: // Naga V2 HyperSpeed Receiver
+        case 0x00B8: // Viper V3 HyperSpeed
+        case 0x00B9: // Basilisk V3 X HyperSpeed
+        case 0x00BE: // DeathAdder V4 Pro Wired
+        case 0x00BF: // DeathAdder V4 Pro Wireless
+        case 0x00C0: // Viper V3 Pro Wired
+        case 0x00C1: // Viper V3 Pro Wireless
+        case 0x00C8: // Pro Click V2 Vertical Edition Wireless
+        case 0x00C7: // Pro Click V2 Vertical Edition Wired
+        case 0x00D0: // Pro Click V2 Wired
+        case 0x00D1: // Pro Click V2 Wireless
+        case 0x0555: // BlackShark V2 2023 (Assumed)
+            return 0x1F;
+
         // 0xFF Devices
+        case 0x001F: // Naga Epic
+        case 0x0024: // Mamba 2012 Wired
+        case 0x0025: // Mamba 2012 Wireless
+        case 0x0032: // Ouroboros
+        case 0x003E: // Naga Epic Chroma
+        case 0x003F: // Naga Epic Chroma Dock
         case 0x0044: // Mamba Wired
         case 0x0045: // Mamba Wireless
-        case 0x0046: // Mamba TE Wired
-        case 0x005B: // DeathAdder Elite
-        case 0x005C: // Abyssus V2
-        case 0x0050: // DeathAdder Chroma
-        case 0x0032: // Naga Epic Chroma
-        case 0x0060: // Naga Trinity
-        case 0x0078: // Viper
         case 0x007A: // Viper Ultimate Wired
         case 0x007B: // Viper Ultimate Wireless
         case 0x0083: // Basilisk X HyperSpeed
-        case 0x008A: // Viper Mini
             return 0xFF;
 
         default:
-            // Default to 0x1F for unknown newer devices, or try 0xFF?
-            // Let's try 0xFF as a safe default for older ones, or maybe we need to try multiple?
-            // Let's default to 0xFF as it covers a lot of common ones,
-            // but for "Optimized application" maybe we stick to what we know.
-            return 0xFF;
+             return 0xFF;
     }
 }
 
@@ -154,33 +183,24 @@ bool RazerDevice::SendRequest(RazerReport& request, RazerReport& response) {
 
     // Ensure transaction ID is set
     if (request.transaction_id == 0) {
-        request.transaction_id = GetTransactionID();
+        if (m_transactionId != 0) {
+            request.transaction_id = m_transactionId;
+        } else {
+            request.transaction_id = GetTransactionID();
+        }
     }
 
     request.crc = CalculateCRC(request);
-
-    // Prepare buffer. Windows HID expects Report ID as the first byte if using Report IDs.
-    // Razer uses Report ID 0x00.
-    // However, HidD_SetFeature needs the buffer to match the report.
-    // Since Report ID is 0, we normally pass the data directly.
-    // But some APIs expect a 0 byte prepended.
-    // The Razer struct has `status` as the first byte.
-    // If we assume ReportID=0, then `status` is the first byte of data.
-    // For HidD_SetFeature, we typically need a buffer of [ReportID] [Data...].
-    // Since ReportID is 0, we need a 0 byte then the 90 bytes of data.
 
     unsigned char buffer[91];
     buffer[0] = 0x00; // Report ID
     memcpy(&buffer[1], &request, 90);
 
     if (!HidD_SetFeature(m_hDevice, buffer, 91)) {
-        // Try without the leading zero if it failed?
-        // Usually feature reports always need the ID.
         return false;
     }
 
     // Now read response
-    // Wait a bit? OpenRazer sleeps.
     Sleep(20); // 20ms
 
     unsigned char inBuffer[91];
@@ -203,19 +223,39 @@ bool RazerDevice::SendRequest(RazerReport& request, RazerReport& response) {
 }
 
 int RazerDevice::GetBatteryLevel() {
-    RazerReport request = {0};
-    RazerReport response = {0};
-
-    // Class 0x07, ID 0x80, Data Size 0x02
-    request.command_class = 0x07;
-    request.command_id = 0x80;
-    request.data_size = 0x02;
-
-    if (SendRequest(request, response)) {
-        // Value is 0-255
-        int val = response.arguments[1];
-        return (val * 100) / 255;
+    // Try multiple transaction IDs if default fails
+    // If we already have a working ID, try it first
+    std::vector<unsigned char> ids;
+    if (m_transactionId != 0) {
+        ids.push_back(m_transactionId);
+    } else {
+        ids.push_back(GetTransactionID());
     }
+
+    // Add fallbacks
+    if (ids.back() != 0x3F) ids.push_back(0x3F);
+    if (ids.back() != 0x1F) ids.push_back(0x1F);
+    if (ids.back() != 0xFF) ids.push_back(0xFF);
+
+    for (unsigned char id : ids) {
+        RazerReport request = {0};
+        RazerReport response = {0};
+
+        request.transaction_id = id;
+        request.command_class = 0x07;
+        request.command_id = 0x80;
+        request.data_size = 0x02;
+
+        if (SendRequest(request, response)) {
+            // Cache the working ID
+            m_transactionId = id;
+
+            // Value is 0-255
+            int val = response.arguments[1];
+            return (val * 100) / 255;
+        }
+    }
+
     return -1;
 }
 
@@ -234,38 +274,58 @@ int RazerDevice::GetChargingStatus() {
     return -1;
 }
 
+bool RazerDevice::IsRazerControlInterface() {
+    if (!IsConnected()) return false;
+
+    PHIDP_PREPARSED_DATA preparsedData;
+    if (!HidD_GetPreparsedData(m_hDevice, &preparsedData)) {
+        Logger::Instance().Log(L"HidD_GetPreparsedData failed for " + m_devicePath);
+        return false;
+    }
+
+    HIDP_CAPS caps;
+    NTSTATUS status = HidP_GetCaps(preparsedData, &caps);
+
+    HidD_FreePreparsedData(preparsedData);
+
+    if (status != HIDP_STATUS_SUCCESS) {
+        Logger::Instance().Log(L"HidP_GetCaps failed for " + m_devicePath);
+        return false;
+    }
+
+    std::wstringstream ss;
+    ss << L"Device Caps: UsagePage=0x" << std::hex << caps.UsagePage << L" Usage=0x" << caps.Usage << L" Path=" << m_devicePath;
+    Logger::Instance().Log(ss.str());
+
+    // Filter for Vendor Defined Usage Pages (0xFF00 - 0xFFFF)
+    if (caps.UsagePage >= 0xFF00) {
+        return true;
+    }
+
+    return false;
+}
+
 std::wstring RazerDevice::GetDeviceType() const {
-    // Heuristic based on PID
-    // 0x00xx -> Usually Keyboards or Mice
-    // Let's implement a simple lookup or string "Device"
-    // The prompt asks for "Ears, Mouse, etc."
-
-    // We can use the switch case again
     switch (m_pid) {
-        case 0x0044: case 0x0045: case 0x0046: // Mamba
-        case 0x0050: // DeathAdder Chroma
-        case 0x005B: // DA Elite
-        case 0x0084: // DA V2
-        case 0x0064: // Basilisk
-        case 0x00B6: case 0x00B7: // Basilisk V3 Pro
-        case 0x0078: case 0x007A: case 0x007B: // Viper
-        case 0x008A: // Viper Mini
-        case 0x00AB: case 0x00AC: // Cobra
-        case 0x006C: case 0x006D: // Lancehead
-            return L"Mouse";
-
-        case 0x0054: // Kraken 7.1 Classic
+        // Headsets
+        case 0x0054: // Kraken Classic
+        case 0x0201: // Kraken Classic Alt
         case 0x0051: // Kraken 7.1 Chroma
-        case 0x0504: // Kraken V3
+        case 0x0504: // Kraken 7.1 V2
+        case 0x0527: // Kraken Ultimate
+        case 0x0535: // Kraken Kitty V2
         case 0x051A: // Barracuda X
+        case 0x0555: // BlackShark V2 2023
             return L"Headset";
 
+        // Keyboards (Examples)
         case 0x0203: // BlackWidow Chroma
         case 0x0221: // BlackWidow V3
         case 0x0257: // Huntsman V2
             return L"Keyboard";
 
         default:
-            return L"Device";
+            // Most devices handled by this class are mice (from razermouse driver)
+            return L"Mouse";
     }
 }

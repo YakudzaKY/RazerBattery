@@ -21,8 +21,13 @@ void TrayIcon::Remove() {
 void TrayIcon::Update(const std::wstring& type, int batteryLevel, bool isCharging) {
     m_nid.hIcon = CreateBatteryIcon(type, batteryLevel, isCharging);
 
-    std::wstring tip = type + L": " + std::to_wstring(batteryLevel) + L"%";
-    if (isCharging) tip += L" (Charging)";
+    std::wstring tip;
+    if (batteryLevel < 0) {
+        tip = type + L": Unknown";
+    } else {
+        tip = type + L": " + std::to_wstring(batteryLevel) + L"%";
+        if (isCharging) tip += L" (Charging)";
+    }
 
     StringCchCopy(m_nid.szTip, ARRAYSIZE(m_nid.szTip), tip.c_str());
 
@@ -79,19 +84,27 @@ HICON TrayIcon::CreateBatteryIcon(const std::wstring& type, int batteryLevel, bo
     DeleteObject(hBrushFrame);
 
     InflateRect(&barRect, -1, -1);
-    int barWidth = (barRect.right - barRect.left) * batteryLevel / 100;
-    RECT fillRect = barRect;
-    fillRect.right = fillRect.left + barWidth;
 
-    COLORREF color = RGB(0, 255, 0);
-    if (batteryLevel < 20) color = RGB(255, 0, 0);
-    else if (batteryLevel < 50) color = RGB(255, 255, 0);
+    if (batteryLevel >= 0) {
+        int barWidth = (barRect.right - barRect.left) * batteryLevel / 100;
+        RECT fillRect = barRect;
+        fillRect.right = fillRect.left + barWidth;
 
-    if (isCharging) color = RGB(0, 255, 255); // Cyan for charging
+        COLORREF color = RGB(0, 255, 0);
+        if (batteryLevel < 20) color = RGB(255, 0, 0);
+        else if (batteryLevel < 50) color = RGB(255, 255, 0);
 
-    HBRUSH hBrushFill = CreateSolidBrush(color);
-    FillRect(hdcMem, &fillRect, hBrushFill);
-    DeleteObject(hBrushFill);
+        if (isCharging) color = RGB(0, 255, 255); // Cyan for charging
+
+        HBRUSH hBrushFill = CreateSolidBrush(color);
+        FillRect(hdcMem, &fillRect, hBrushFill);
+        DeleteObject(hBrushFill);
+    } else {
+        // Unknown status (Question mark)
+        RECT qRect = barRect;
+        SetTextColor(hdcMem, RGB(150, 150, 150));
+        DrawTextW(hdcMem, L"?", -1, &qRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 
     // Clean up DC
     SelectObject(hdcMem, hbmOld);

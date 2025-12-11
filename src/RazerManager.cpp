@@ -1,7 +1,9 @@
 #include "RazerManager.h"
+#include "Logger.h"
 #include <setupapi.h>
 #include <hidsdi.h>
 #include <initguid.h>
+#include <sstream>
 
 // Helper to convert GUID to string or similar, but we assume HID class GUID
 DEFINE_GUID(GUID_DEVINTERFACE_HID, 0x4D1E55B2, 0xF16F, 0x11CF, 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30);
@@ -14,6 +16,7 @@ RazerManager::~RazerManager() {
 }
 
 void RazerManager::Initialize(HWND hwnd) {
+    Logger::Instance().Log("Initializing RazerManager");
     m_hwnd = hwnd;
     m_noDeviceIcon = std::make_shared<TrayIcon>(m_hwnd, 0); // ID 0
     m_noDeviceIcon->ShowNoDevices();
@@ -44,6 +47,7 @@ void RazerManager::UnregisterNotifications() {
 }
 
 void RazerManager::EnumerateDevices() {
+    Logger::Instance().Log("Enumerating devices...");
     HDEVINFO hDevInfo;
     SP_DEVICE_INTERFACE_DATA devInfoData;
     PSP_DEVICE_INTERFACE_DETAIL_DATA detailData = NULL;
@@ -56,7 +60,10 @@ void RazerManager::EnumerateDevices() {
         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE
     );
 
-    if (hDevInfo == INVALID_HANDLE_VALUE) return;
+    if (hDevInfo == INVALID_HANDLE_VALUE) {
+        Logger::Instance().Log("SetupDiGetClassDevs failed");
+        return;
+    }
 
     devInfoData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
@@ -77,11 +84,7 @@ void RazerManager::EnumerateDevices() {
 
             // Check if it's a Razer device (VID 1532)
             if (pathLower.find(L"vid_1532") != std::wstring::npos) {
-                // We generally want interface 0 (mi_00) for control, but we'll try adding
-                // any interface matching the VID. AddDevice handles duplicate checks and
-                // connectivity verification (GetBatteryLevel), so if we grab a wrong
-                // interface (like a keyboard/mouse endpoint that doesn't support feature reports),
-                // the handshake will fail gracefully.
+                Logger::Instance().Log(L"Found Razer device path: " + path);
                 AddDevice(path);
             }
         }
@@ -94,26 +97,43 @@ void RazerManager::EnumerateDevices() {
 }
 
 void RazerManager::AddDevice(const std::wstring& path) {
-    if (m_devices.find(path) != m_devices.end()) return;
+    if (m_devices.find(path) != m_devices.end()) {
+        Logger::Instance().Log(L"Device already added: " + path);
+        return;
+    }
 
     auto device = std::make_shared<RazerDevice>(path);
     if (device->Connect()) {
-        // Try to get battery to verify it supports the protocol
-        if (device->GetBatteryLevel() != -1) {
-            m_devices[path] = device;
+        // Filter by Usage Page (Must be Vendor Specific)
+        if (!device->IsRazerControlInterface()) {
+            // Logger::Instance().Log(L"Skipping non-control interface: " + path);
+            return;
+        }
 
-            // Create an icon for it
-            // Generate a unique ID. We use a monotonic counter to avoid collisions
-            // if devices are removed and re-added in different orders.
-            int id = m_nextIconId++;
-            auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
-            m_icons[path] = icon;
+        m_devices[path] = device;
+
+        // Create an icon for it
+        int id = m_nextIconId++;
+        auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
+        m_icons[path] = icon;
+
+        // Try to get battery to verify it supports the protocol
+        int level = device->GetBatteryLevel();
+
+        if (level != -1) {
+            std::wstringstream ss;
+            ss << L"Device connected and verified. Battery: " << level;
+            Logger::Instance().Log(ss.str());
 
             // Initial update
-            int level = device->GetBatteryLevel();
             int charging = device->GetChargingStatus();
             icon->Update(device->GetDeviceType(), level, charging == 1);
+        } else {
+             Logger::Instance().Log(L"Device connected but GetBatteryLevel failed: " + path);
+             icon->Update(device->GetDeviceType(), -1, false);
         }
+    } else {
+         Logger::Instance().Log(L"Failed to connect to device: " + path);
     }
 }
 
