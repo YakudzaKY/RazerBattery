@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <sstream>
+#include <algorithm>
 #include <hidpi.h>
 
 // Helper to calculate CRC
@@ -45,6 +46,8 @@ void RazerDevice::CloseHandleSafe() {
 }
 
 bool RazerDevice::Connect() {
+    m_isReadOnly = false;
+    // Try Read/Write first
     m_hDevice = CreateFileW(
         m_devicePath.c_str(),
         GENERIC_READ | GENERIC_WRITE,
@@ -54,6 +57,49 @@ bool RazerDevice::Connect() {
         0,
         NULL
     );
+
+    if (m_hDevice == INVALID_HANDLE_VALUE) {
+        // Try Write only (often sufficient for Feature Reports and bypasses Input security)
+        m_hDevice = CreateFileW(
+            m_devicePath.c_str(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL
+        );
+    }
+
+    if (m_hDevice == INVALID_HANDLE_VALUE) {
+        // Try Read only (just to query caps)
+        m_hDevice = CreateFileW(
+            m_devicePath.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL
+        );
+    }
+
+    if (m_hDevice == INVALID_HANDLE_VALUE) {
+        // Try 0 (Attributes only)
+        m_hDevice = CreateFileW(
+            m_devicePath.c_str(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL
+        );
+        if (m_hDevice != INVALID_HANDLE_VALUE) {
+            m_isReadOnly = true;
+            Logger::Instance().Log(L"Connected in limited mode (0 access) for " + m_devicePath);
+        }
+    }
 
     if (m_hDevice == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
@@ -156,7 +202,6 @@ unsigned char RazerDevice::GetTransactionID() const {
         case 0x00C7: // Pro Click V2 Vertical Edition Wired
         case 0x00D0: // Pro Click V2 Wired
         case 0x00D1: // Pro Click V2 Wireless
-        case 0x0555: // BlackShark V2 2023 (Assumed)
             return 0x1F;
 
         // 0xFF Devices
@@ -223,6 +268,8 @@ bool RazerDevice::SendRequest(RazerReport& request, RazerReport& response) {
 }
 
 int RazerDevice::GetBatteryLevel() {
+    if (m_isReadOnly) return -2;
+
     // Try multiple transaction IDs if default fails
     // If we already have a working ID, try it first
     std::vector<unsigned char> ids;
@@ -233,9 +280,11 @@ int RazerDevice::GetBatteryLevel() {
     }
 
     // Add fallbacks
-    if (ids.back() != 0x3F) ids.push_back(0x3F);
-    if (ids.back() != 0x1F) ids.push_back(0x1F);
-    if (ids.back() != 0xFF) ids.push_back(0xFF);
+    if (std::find(ids.begin(), ids.end(), 0x3F) == ids.end()) ids.push_back(0x3F);
+    if (std::find(ids.begin(), ids.end(), 0x1F) == ids.end()) ids.push_back(0x1F);
+    if (std::find(ids.begin(), ids.end(), 0xFF) == ids.end()) ids.push_back(0xFF);
+    if (std::find(ids.begin(), ids.end(), 0x80) == ids.end()) ids.push_back(0x80);
+    if (std::find(ids.begin(), ids.end(), 0x08) == ids.end()) ids.push_back(0x08);
 
     for (unsigned char id : ids) {
         RazerReport request = {0};
