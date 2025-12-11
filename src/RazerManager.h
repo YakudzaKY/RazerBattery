@@ -28,9 +28,6 @@ private:
     std::shared_ptr<TrayIcon> m_noDeviceIcon;
     int m_nextIconId = 1;
 
-    std::set<unsigned short> m_activePids;
-    std::map<unsigned short, std::wstring> m_lockedPids; // PID -> Path
-
     void EnumerateDevices();
     void AddDevice(const std::wstring& path);
     void RemoveDevice(const std::wstring& path);
