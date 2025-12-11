@@ -6,7 +6,14 @@ if not exist build (
 )
 
 cd build
-cmake .. -A x64
+
+REM Clean CMakeCache.txt to ensure a fresh configuration and avoid "platform x64" errors
+REM from previous failed runs.
+if exist CMakeCache.txt (
+    del CMakeCache.txt
+)
+
+cmake .. -DCMAKE_BUILD_TYPE=Release
 if %errorlevel% neq 0 (
     echo CMake generation failed!
     pause
