@@ -24,6 +24,7 @@ public:
     int GetChargingStatus();
 
     std::wstring GetDeviceType() const;
+    bool IsRazerControlInterface();
 
 private:
     HANDLE m_hDevice;

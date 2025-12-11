@@ -104,6 +104,12 @@ void RazerManager::AddDevice(const std::wstring& path) {
 
     auto device = std::make_shared<RazerDevice>(path);
     if (device->Connect()) {
+        // Filter by Usage Page (Must be Vendor Specific)
+        if (!device->IsRazerControlInterface()) {
+            // Logger::Instance().Log(L"Skipping non-control interface: " + path);
+            return;
+        }
+
         m_devices[path] = device;
 
         // Create an icon for it
