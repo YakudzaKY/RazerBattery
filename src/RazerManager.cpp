@@ -4,23 +4,9 @@
 #include <hidsdi.h>
 #include <initguid.h>
 #include <sstream>
-#include <algorithm>
 
 // Helper to convert GUID to string or similar, but we assume HID class GUID
 DEFINE_GUID(GUID_DEVINTERFACE_HID, 0x4D1E55B2, 0xF16F, 0x11CF, 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30);
-
-unsigned short ParsePidFromPath(const std::wstring& path) {
-    std::wstring pathLower = path;
-    for (auto & c: pathLower) c = towlower(c);
-
-    auto pos = pathLower.find(L"pid_");
-    if (pos != std::wstring::npos && pos + 8 <= pathLower.length()) {
-        std::wstring pidStr = pathLower.substr(pos + 4, 4);
-        wchar_t* end;
-        return (unsigned short)wcstol(pidStr.c_str(), &end, 16);
-    }
-    return 0;
-}
 
 RazerManager::RazerManager() : m_hwnd(NULL), m_hDevNotify(NULL) {
 }
@@ -112,43 +98,26 @@ void RazerManager::EnumerateDevices() {
 
 void RazerManager::AddDevice(const std::wstring& path) {
     if (m_devices.find(path) != m_devices.end()) {
-        return;
-    }
-
-    unsigned short pid = ParsePidFromPath(path);
-
-    // If we already have a working interface for this PID, skip
-    if (m_activePids.find(pid) != m_activePids.end()) {
+        Logger::Instance().Log(L"Device already added: " + path);
         return;
     }
 
     auto device = std::make_shared<RazerDevice>(path);
     if (device->Connect()) {
+        // Filter by Usage Page (Must be Vendor Specific)
         if (!device->IsRazerControlInterface()) {
+            // Logger::Instance().Log(L"Skipping non-control interface: " + path);
             return;
         }
 
-        // We found a working interface!
-        m_activePids.insert(pid);
-
-        // Remove any locked icon for this PID
-        auto itLocked = m_lockedPids.find(pid);
-        if (itLocked != m_lockedPids.end()) {
-            std::wstring lockedPath = itLocked->second;
-            // Remove icon
-            auto itIcon = m_icons.find(lockedPath);
-            if (itIcon != m_icons.end()) {
-                itIcon->second->Remove();
-                m_icons.erase(itIcon);
-            }
-            m_lockedPids.erase(itLocked);
-        }
-
         m_devices[path] = device;
+
+        // Create an icon for it
         int id = m_nextIconId++;
         auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
         m_icons[path] = icon;
 
+        // Try to get battery to verify it supports the protocol
         int level = device->GetBatteryLevel();
 
         if (level != -1) {
@@ -156,31 +125,12 @@ void RazerManager::AddDevice(const std::wstring& path) {
             ss << L"Device connected and verified. Battery: " << level;
             Logger::Instance().Log(ss.str());
 
+            // Initial update
             int charging = device->GetChargingStatus();
             icon->Update(device->GetDeviceType(), level, charging == 1);
         } else {
-             // Even if battery check failed (e.g. read only 0 access), we show it as Unknown/Locked
              Logger::Instance().Log(L"Device connected but GetBatteryLevel failed: " + path);
-             icon->Update(device->GetDeviceType(), level == -2 ? -2 : -1, false);
-        }
-    } else {
-        // Connect failed
-        if (GetLastError() == 5) { // Access Denied
-             if (m_lockedPids.find(pid) == m_lockedPids.end()) {
-                 // Add placeholder locked icon
-                 m_lockedPids[pid] = path;
-
-                 int id = m_nextIconId++;
-                 auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
-                 m_icons[path] = icon;
-
-                 // Show locked status
-                 // We don't have a device object to get type, assume Device
-                 icon->Update(L"Device", -2, false);
-                 Logger::Instance().Log(L"Added locked placeholder for PID " + std::to_wstring(pid));
-             }
-        } else {
-             Logger::Instance().Log(L"Failed to connect to device: " + path);
+             icon->Update(device->GetDeviceType(), -1, false);
         }
     } else {
          Logger::Instance().Log(L"Failed to connect to device: " + path);
@@ -188,25 +138,16 @@ void RazerManager::AddDevice(const std::wstring& path) {
 }
 
 void RazerManager::RemoveDevice(const std::wstring& path) {
-    unsigned short pid = ParsePidFromPath(path);
-    m_activePids.erase(pid);
-
-    auto itLocked = m_lockedPids.find(pid);
-    if (itLocked != m_lockedPids.end() && itLocked->second == path) {
-        m_lockedPids.erase(itLocked);
-    }
-
     auto it = m_devices.find(path);
     if (it != m_devices.end()) {
         m_devices.erase(it);
-    }
 
-    auto itIcon = m_icons.find(path);
-    if (itIcon != m_icons.end()) {
-        itIcon->second->Remove();
-        m_icons.erase(itIcon);
+        auto itIcon = m_icons.find(path);
+        if (itIcon != m_icons.end()) {
+            itIcon->second->Remove();
+            m_icons.erase(itIcon);
+        }
     }
-
     UpdateTrayIcons();
 }
 
