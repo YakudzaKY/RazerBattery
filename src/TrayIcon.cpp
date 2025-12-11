@@ -22,7 +22,9 @@ void TrayIcon::Update(const std::wstring& type, int batteryLevel, bool isChargin
     m_nid.hIcon = CreateBatteryIcon(type, batteryLevel, isCharging);
 
     std::wstring tip;
-    if (batteryLevel < 0) {
+    if (batteryLevel == -2) {
+        tip = type + L": Locked (Access Denied)";
+    } else if (batteryLevel < 0) {
         tip = type + L": Unknown";
     } else {
         tip = type + L": " + std::to_wstring(batteryLevel) + L"%";
@@ -99,6 +101,11 @@ HICON TrayIcon::CreateBatteryIcon(const std::wstring& type, int batteryLevel, bo
         HBRUSH hBrushFill = CreateSolidBrush(color);
         FillRect(hdcMem, &fillRect, hBrushFill);
         DeleteObject(hBrushFill);
+    } else if (batteryLevel == -2) {
+        // Locked/Error
+        RECT qRect = barRect;
+        SetTextColor(hdcMem, RGB(255, 0, 0));
+        DrawTextW(hdcMem, L"!", -1, &qRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     } else {
         // Unknown status (Question mark)
         RECT qRect = barRect;
