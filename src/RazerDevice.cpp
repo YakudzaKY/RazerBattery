@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <sstream>
+#include <hidpi.h>
 
 // Helper to calculate CRC
 unsigned char RazerDevice::CalculateCRC(const RazerReport& report) {
@@ -270,6 +271,37 @@ int RazerDevice::GetChargingStatus() {
         return response.arguments[1];
     }
     return -1;
+}
+
+bool RazerDevice::IsRazerControlInterface() {
+    if (!IsConnected()) return false;
+
+    PHIDP_PREPARSED_DATA preparsedData;
+    if (!HidD_GetPreparsedData(m_hDevice, &preparsedData)) {
+        Logger::Instance().Log(L"HidD_GetPreparsedData failed for " + m_devicePath);
+        return false;
+    }
+
+    HIDP_CAPS caps;
+    NTSTATUS status = HidP_GetCaps(preparsedData, &caps);
+
+    HidD_FreePreparsedData(preparsedData);
+
+    if (status != HIDP_STATUS_SUCCESS) {
+        Logger::Instance().Log(L"HidP_GetCaps failed for " + m_devicePath);
+        return false;
+    }
+
+    std::wstringstream ss;
+    ss << L"Device Caps: UsagePage=0x" << std::hex << caps.UsagePage << L" Usage=0x" << caps.Usage << L" Path=" << m_devicePath;
+    Logger::Instance().Log(ss.str());
+
+    // Filter for Vendor Defined Usage Pages (0xFF00 - 0xFFFF)
+    if (caps.UsagePage >= 0xFF00) {
+        return true;
+    }
+
+    return false;
 }
 
 std::wstring RazerDevice::GetDeviceType() const {
