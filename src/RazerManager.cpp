@@ -104,27 +104,27 @@ void RazerManager::AddDevice(const std::wstring& path) {
 
     auto device = std::make_shared<RazerDevice>(path);
     if (device->Connect()) {
+        m_devices[path] = device;
+
+        // Create an icon for it
+        int id = m_nextIconId++;
+        auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
+        m_icons[path] = icon;
+
         // Try to get battery to verify it supports the protocol
         int level = device->GetBatteryLevel();
+
         if (level != -1) {
             std::wstringstream ss;
             ss << L"Device connected and verified. Battery: " << level;
             Logger::Instance().Log(ss.str());
-
-            m_devices[path] = device;
-
-            // Create an icon for it
-            // Generate a unique ID. We use a monotonic counter to avoid collisions
-            // if devices are removed and re-added in different orders.
-            int id = m_nextIconId++;
-            auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
-            m_icons[path] = icon;
 
             // Initial update
             int charging = device->GetChargingStatus();
             icon->Update(device->GetDeviceType(), level, charging == 1);
         } else {
              Logger::Instance().Log(L"Device connected but GetBatteryLevel failed: " + path);
+             icon->Update(device->GetDeviceType(), -1, false);
         }
     } else {
          Logger::Instance().Log(L"Failed to connect to device: " + path);
