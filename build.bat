@@ -6,7 +6,7 @@ if not exist build (
 )
 
 cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -A x64
 if %errorlevel% neq 0 (
     echo CMake generation failed!
     pause
