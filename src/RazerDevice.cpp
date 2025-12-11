@@ -202,6 +202,7 @@ unsigned char RazerDevice::GetTransactionID() const {
         case 0x00C7: // Pro Click V2 Vertical Edition Wired
         case 0x00D0: // Pro Click V2 Wired
         case 0x00D1: // Pro Click V2 Wireless
+        case 0x0555: // BlackShark V2 2023
             return 0x1F;
 
         // 0xFF Devices
@@ -224,7 +225,10 @@ unsigned char RazerDevice::GetTransactionID() const {
 }
 
 bool RazerDevice::SendRequest(RazerReport& request, RazerReport& response) {
-    if (!IsConnected()) return false;
+    if (!IsConnected()) {
+        Logger::Instance().Log(L"SendRequest: Not connected " + m_devicePath);
+        return false;
+    }
 
     // Ensure transaction ID is set
     if (request.transaction_id == 0) {
@@ -343,15 +347,32 @@ bool RazerDevice::IsRazerControlInterface() {
     }
 
     std::wstringstream ss;
-    ss << L"Device Caps: UsagePage=0x" << std::hex << caps.UsagePage << L" Usage=0x" << caps.Usage << L" Path=" << m_devicePath;
+    ss << L"Device Caps: UsagePage=0x" << std::hex << caps.UsagePage << L" Usage=0x" << caps.Usage
+       << L" FeatureReportByteLength=" << caps.FeatureReportByteLength
+       << L" Path=" << m_devicePath;
     Logger::Instance().Log(ss.str());
+
+    m_usagePage = caps.UsagePage;
 
     // Filter for Vendor Defined Usage Pages (0xFF00 - 0xFFFF)
     if (caps.UsagePage >= 0xFF00) {
         return true;
     }
 
+    // Allow Generic Desktop (0x1) with Usage 0 (Undefined) - common fallback for some devices
+    if (caps.UsagePage == 0x1 && caps.Usage == 0x0) {
+        if (caps.FeatureReportByteLength >= 90) {
+            return true;
+        } else {
+             Logger::Instance().Log(L"Skipping Generic interface due to small report length: " + m_devicePath);
+        }
+    }
+
     return false;
+}
+
+bool RazerDevice::IsGeneric() const {
+    return m_usagePage == 0x1;
 }
 
 std::wstring RazerDevice::GetDeviceType() const {

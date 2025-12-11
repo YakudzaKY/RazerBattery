@@ -25,11 +25,13 @@ public:
 
     std::wstring GetDeviceType() const;
     bool IsRazerControlInterface();
+    bool IsGeneric() const;
 
 private:
     HANDLE m_hDevice;
     std::wstring m_devicePath;
     unsigned short m_pid;
+    unsigned short m_usagePage = 0;
     unsigned char m_transactionId = 0; // Cached working transaction ID
     bool m_isReadOnly = false;
 
