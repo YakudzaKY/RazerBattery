@@ -182,8 +182,6 @@ void RazerManager::AddDevice(const std::wstring& path) {
         } else {
              Logger::Instance().Log(L"Failed to connect to device: " + path);
         }
-    } else {
-         Logger::Instance().Log(L"Failed to connect to device: " + path);
     }
 }
 
