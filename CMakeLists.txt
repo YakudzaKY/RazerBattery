@@ -10,6 +10,7 @@ set(SOURCES
     src/RazerManager.cpp
     src/RazerDevice.cpp
     src/TrayIcon.cpp
+    src/Logger.cpp
 )
 
 # Headers
@@ -17,6 +18,7 @@ set(HEADERS
     src/RazerManager.h
     src/RazerDevice.h
     src/TrayIcon.h
+    src/Logger.h
 )
 
 add_executable(RazerBatteryTray WIN32 ${SOURCES} ${HEADERS})
