@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(RazerBatteryTray)
 
 set(CMAKE_CXX_STANDARD 17)
+add_compile_definitions(UNICODE _UNICODE)
 
 # Source files
 set(SOURCES
