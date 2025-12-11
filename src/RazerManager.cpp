@@ -132,6 +132,8 @@ void RazerManager::AddDevice(const std::wstring& path) {
              Logger::Instance().Log(L"Device connected but GetBatteryLevel failed: " + path);
              icon->Update(device->GetDeviceType(), -1, false);
         }
+    } else {
+         Logger::Instance().Log(L"Failed to connect to device: " + path);
     }
 }
 
