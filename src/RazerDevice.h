@@ -24,11 +24,14 @@ public:
     int GetChargingStatus();
 
     std::wstring GetDeviceType() const;
+    bool IsRazerControlInterface();
 
 private:
     HANDLE m_hDevice;
     std::wstring m_devicePath;
     unsigned short m_pid;
+    unsigned char m_transactionId = 0; // Cached working transaction ID
+    bool m_isReadOnly = false;
 
     unsigned char GetTransactionID() const;
     void CloseHandleSafe();
