@@ -26,6 +26,7 @@ private:
     std::map<std::wstring, std::shared_ptr<RazerDevice>> m_devices;
     std::map<std::wstring, std::shared_ptr<TrayIcon>> m_icons;
     std::shared_ptr<TrayIcon> m_noDeviceIcon;
+    int m_nextIconId = 1;
 
     void EnumerateDevices();
     void AddDevice(const std::wstring& path);

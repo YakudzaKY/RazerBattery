@@ -12,23 +12,46 @@ An optimized Windows application that monitors connected Razer devices and displ
   - Uses a low-frequency timer (every 5 minutes) to query battery levels, minimizing system overhead.
 - **Zero-Config:** Automatically detects compatible devices.
 
-## Build Instructions
+## Build Instructions (Инструкция по сборке)
 
-This project uses CMake. Ensure you have a C++ compiler (e.g., MSVC or MinGW) and CMake installed.
+This project uses CMake. You need **CMake** and a C++ compiler (like **Visual Studio** or **MinGW**) installed on Windows.
+
+### Quick Build (Windows)
+
+Simply double-click `build.bat`.
+
+### Manual Build
 
 1.  Create a build directory:
     ```bash
     mkdir build
     cd build
     ```
-2.  Generate build files:
+2.  Generate build files (for Visual Studio):
     ```bash
     cmake ..
     ```
 3.  Build the project:
     ```bash
-    cmake --build .
+    cmake --build . --config Release
     ```
+
+### Как скомпилировать (Russian)
+
+Для сборки вам понадобится **CMake** и компилятор C++ (например, **Visual Studio 2019/2022**).
+
+1.  **Простой способ:** Запустите файл `build.bat`. Он автоматически создаст папку build и скомпилирует проект.
+2.  **Ручной способ:**
+    - Откройте командную строку (cmd или PowerShell).
+    - Перейдите в папку проекта.
+    - Выполните команды:
+      ```cmd
+      mkdir build
+      cd build
+      cmake ..
+      cmake --build . --config Release
+      ```
+    - Исполняемый файл `RazerBatteryTray.exe` появится в папке `build\Release`.
 
 ## Credits & Acknowledgements
 

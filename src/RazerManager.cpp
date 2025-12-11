@@ -103,10 +103,9 @@ void RazerManager::AddDevice(const std::wstring& path) {
             m_devices[path] = device;
 
             // Create an icon for it
-            // Generate a unique ID (hash of path or just an incremental ID)
-            // For simplicity, let's use the PID + some index or similar.
-            // Or just map size + 1.
-            int id = m_icons.size() + 1;
+            // Generate a unique ID. We use a monotonic counter to avoid collisions
+            // if devices are removed and re-added in different orders.
+            int id = m_nextIconId++;
             auto icon = std::make_shared<TrayIcon>(m_hwnd, id);
             m_icons[path] = icon;
 
