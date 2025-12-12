@@ -110,6 +110,13 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
             LOG_ERROR("Failed to get active config descriptor: " << libusb_error_name(r));
         }
 
+        // Failsafe for BlackShark V2 Pro 2023
+        if (pid == 0x0555) {
+             bool found = false;
+             for (int i : interfaces) if (i == 3) found = true;
+             if (!found) interfaces.push_back(3);
+        }
+
         if (interfaces.empty()) {
             LOG_INFO("No HID/Vendor interfaces found. Fallback to {0, 1, 2}.");
             interfaces = {0, 1, 2};
