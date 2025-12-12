@@ -37,6 +37,8 @@ private:
     std::wstring cachedSerial;
 
     USHORT featureReportLength;
+    USHORT inputReportLength;
+    USHORT outputReportLength;
     USHORT usagePage;
     USHORT usage;
 
