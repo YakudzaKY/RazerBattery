@@ -8,7 +8,6 @@ This is a native C++ Windows application designed to be lightweight and optimize
 
 ## Repository Structure
 
-- **`old_example/`**;**`old_example2/`**: A working but very poor example of bad code from another repository. You can take something as an example.
 - **`src/`**: Contains the source code for this application.
   - `main.cpp`: Entry point, window message loop, and timer setup.
   - `RazerManager`: Handles device enumeration (SetupAPI), device change notifications (`WM_DEVICECHANGE`), and the list of active devices.
