@@ -85,7 +85,26 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (workingInterface != -1) {
         interfaces.push_back(workingInterface);
     } else {
-        interfaces = {0, 1, 2};
+        struct libusb_config_descriptor *config;
+        int r = libusb_get_active_config_descriptor(device, &config);
+        if (r == 0) {
+            for (int i = 0; i < config->bNumInterfaces; i++) {
+                const struct libusb_interface *inter = &config->interface[i];
+                for (int j = 0; j < inter->num_altsetting; j++) {
+                    const struct libusb_interface_descriptor *interdesc = &inter->altsetting[j];
+                    if (interdesc->bInterfaceClass == LIBUSB_CLASS_HID ||
+                        interdesc->bInterfaceClass == LIBUSB_CLASS_VENDOR_SPEC) {
+                        interfaces.push_back(interdesc->bInterfaceNumber);
+                        break;
+                    }
+                }
+            }
+            libusb_free_config_descriptor(config);
+        }
+
+        if (interfaces.empty()) {
+            interfaces = {0, 1, 2};
+        }
     }
 
     for (int iface : interfaces) {
