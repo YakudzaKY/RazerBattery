@@ -10,7 +10,8 @@
 #pragma comment(lib, "hid.lib")
 
 RazerDevice::RazerDevice(const std::wstring& path, int pid)
-    : devicePath(path), pid(pid), fileHandle(INVALID_HANDLE_VALUE), featureReportLength(0), usagePage(0), usage(0) {
+    : devicePath(path), pid(pid), fileHandle(INVALID_HANDLE_VALUE),
+      featureReportLength(0), inputReportLength(0), outputReportLength(0), usagePage(0), usage(0) {
 }
 
 RazerDevice::~RazerDevice() {
@@ -32,11 +33,15 @@ bool RazerDevice::Open() {
         HIDP_CAPS caps;
         HidP_GetCaps(preparsedData, &caps);
         featureReportLength = caps.FeatureReportByteLength;
+        inputReportLength = caps.InputReportByteLength;
+        outputReportLength = caps.OutputReportByteLength;
         usagePage = caps.UsagePage;
         usage = caps.Usage;
         HidD_FreePreparsedData(preparsedData);
     } else {
-        featureReportLength = 0; // Unknown
+        featureReportLength = 0;
+        inputReportLength = 0;
+        outputReportLength = 0;
     }
 
     return true;
@@ -70,24 +75,14 @@ unsigned char RazerDevice::CalculateCRC(razer_report* report) {
 bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (fileHandle == INVALID_HANDLE_VALUE) return false;
 
-    // Ensure standard values
     if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
     // Strategy 1: Feature Report
     if (featureReportLength > 0) {
         size_t len = featureReportLength;
-        // Check reasonable bounds
-        if (len < 91) {
-             // LOG_DEBUG("Feature Report length small: " << len);
-             // Proceed anyway? Or skip?
-             // If too small, it won't hold the Razer struct.
-             // But we try padding?
-             // If len is small (e.g. 1-2 bytes), it's probably standard HID, not Razer Control.
-        }
-
         std::vector<uint8_t> buffer(len, 0);
-        buffer[0] = 0x00; // Report ID
+        buffer[0] = 0x00;
 
         size_t copyLen = 90;
         if (len - 1 < 90) copyLen = len - 1;
@@ -96,44 +91,67 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
 
         if (HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
             Sleep(50);
-
             std::vector<uint8_t> responseBuffer(len, 0);
             responseBuffer[0] = 0x00;
-
             if (HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
                 memcpy(&response, &responseBuffer[1], 90);
                 if (response.status == 0x02) return true;
-                // If status != 0x02, maybe try Output report?
             }
         } else {
-             LOG_ERROR("HidD_SetFeature failed: " << GetLastError() << " (Len: " << len << ")");
+             LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
         }
     }
 
-    // Strategy 2: Output Report (Fallback if Feature failed or not supported)
+    // Strategy 2: Output Report (Control)
     {
-        // LOG_INFO("Trying Output Report fallback...");
-        std::vector<uint8_t> outBuf(91, 0);
-        outBuf[0] = 0x00; // Report ID
-        memcpy(&outBuf[1], &request, 90);
+        // Use 91 bytes or OutputReportLength
+        size_t len = outputReportLength > 0 ? outputReportLength : 91;
+        std::vector<uint8_t> outBuf(len, 0);
+        outBuf[0] = 0x00;
+
+        size_t copyLen = 90;
+        if (len - 1 < 90) copyLen = len - 1;
+        memcpy(&outBuf[1], &request, copyLen);
 
         if (HidD_SetOutputReport(fileHandle, outBuf.data(), (ULONG)outBuf.size())) {
             Sleep(50);
-
-            std::vector<uint8_t> inBuf(91, 0);
-            inBuf[0] = 0x00; // Report ID
-
-            // Try GetInputReport
+            // Read response via Input Report
+            size_t inLen = inputReportLength > 0 ? inputReportLength : 91;
+            std::vector<uint8_t> inBuf(inLen, 0);
+            inBuf[0] = 0x00;
             if (HidD_GetInputReport(fileHandle, inBuf.data(), (ULONG)inBuf.size())) {
                  memcpy(&response, &inBuf[1], 90);
                  if (response.status == 0x02) return true;
-                 LOG_ERROR("OutputReport response status: " << (int)response.status);
             } else {
                  LOG_ERROR("HidD_GetInputReport failed: " << GetLastError());
             }
         } else {
-             // Only log if we didn't try Feature or Feature failed
              LOG_ERROR("HidD_SetOutputReport failed: " << GetLastError());
+
+             // Strategy 3: WriteFile (Interrupt)
+             // Only try if SetOutputReport failed
+             DWORD bytesWritten = 0;
+             if (WriteFile(fileHandle, outBuf.data(), (DWORD)outBuf.size(), &bytesWritten, NULL)) {
+                 Sleep(50);
+
+                 size_t inLen = inputReportLength > 0 ? inputReportLength : 91;
+                 std::vector<uint8_t> inBuf(inLen, 0);
+                 DWORD bytesRead = 0;
+                 // ReadFile for Interrupt In
+                 if (ReadFile(fileHandle, inBuf.data(), (DWORD)inBuf.size(), &bytesRead, NULL)) {
+                      memcpy(&response, &inBuf[1], 90);
+                      if (response.status == 0x02) return true;
+                 } else {
+                      LOG_ERROR("ReadFile failed: " << GetLastError());
+                      // Try GetInputReport as backup for reading?
+                      if (HidD_GetInputReport(fileHandle, inBuf.data(), (ULONG)inBuf.size())) {
+                           memcpy(&response, &inBuf[1], 90);
+                           if (response.status == 0x02) return true;
+                      }
+                 }
+             } else {
+                 LOG_ERROR("WriteFile failed: " << GetLastError());
+             }
         }
     }
 
