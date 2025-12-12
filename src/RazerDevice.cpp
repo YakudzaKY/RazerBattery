@@ -5,6 +5,13 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <setupapi.h>
+#include <hidsdi.h>
+#include <hidpi.h>
+#include <algorithm>
+
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "hid.lib")
 
 RazerDevice::RazerDevice(libusb_device* device, int pid)
     : device(device), handle(nullptr), pid(pid), workingInterface(-1) {
@@ -85,53 +92,109 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (workingInterface != -1) {
         interfaces.push_back(workingInterface);
     } else {
-        interfaces = {0, 1, 2};
+        struct libusb_config_descriptor *config;
+        int r = libusb_get_active_config_descriptor(device, &config);
+        if (r == 0) {
+            for (int i = 0; i < config->bNumInterfaces; i++) {
+                const struct libusb_interface *inter = &config->interface[i];
+                for (int j = 0; j < inter->num_altsetting; j++) {
+                    const struct libusb_interface_descriptor *interdesc = &inter->altsetting[j];
+
+                    LOG_INFO("Interface " << (int)interdesc->bInterfaceNumber << ": Class "
+                             << (int)interdesc->bInterfaceClass << ", SubClass "
+                             << (int)interdesc->bInterfaceSubClass << ", Protocol "
+                             << (int)interdesc->bInterfaceProtocol);
+
+                    if (interdesc->bInterfaceClass == LIBUSB_CLASS_HID ||
+                        interdesc->bInterfaceClass == LIBUSB_CLASS_VENDOR_SPEC) {
+                        interfaces.push_back(interdesc->bInterfaceNumber);
+                        break;
+                    }
+                }
+            }
+            libusb_free_config_descriptor(config);
+        } else {
+            LOG_ERROR("Failed to get active config descriptor: " << libusb_error_name(r));
+        }
+
+        // Failsafe for BlackShark V2 Pro 2023
+        if (pid == 0x0555) {
+             bool found = false;
+             for (int i : interfaces) if (i == 3) found = true;
+             if (!found) interfaces.push_back(3);
+        }
+
+        if (interfaces.empty()) {
+            LOG_INFO("No HID/Vendor interfaces found. Fallback to {0, 1, 2}.");
+            interfaces = {0, 1, 2};
+        }
     }
 
     for (int iface : interfaces) {
+        LOG_INFO("Trying Interface " << iface);
+
         bool claimed = (workingInterface == iface);
         if (!claimed) {
             int r = libusb_claim_interface(handle, iface);
             if (r == 0) {
                 claimed = true;
             } else {
+                LOG_ERROR("Failed to claim interface " << iface << ": " << libusb_error_name(r));
                 continue;
             }
         }
 
         bool success = false;
 
-        // Strategy 1: Feature Report
-        int transferred = libusb_control_transfer(handle,
-            0x21, 0x09, 0x0300, iface,
-            (unsigned char*)&request, 90, 1000);
+        std::vector<int> report_ids = {0x00, 0x01, 0x02};
 
-        if (transferred == 90) {
-            Sleep(50);
-            transferred = libusb_control_transfer(handle,
-                0xA1, 0x01, 0x0300, iface,
-                (unsigned char*)&response, 90, 1000);
+        for (int report_id : report_ids) {
+            // Strategy 1: Feature Report
+            int wValue = 0x0300 | report_id;
 
-            if (transferred == 90 && response.status == 0x02) {
-                success = true;
-            }
-        }
-
-        // Strategy 2: Output Report + Input Report (Fallback)
-        if (!success) {
-            transferred = libusb_control_transfer(handle,
-                0x21, 0x09, 0x0200, iface,
+            int transferred = libusb_control_transfer(handle,
+                0x21, 0x09, wValue, iface,
                 (unsigned char*)&request, 90, 1000);
 
             if (transferred == 90) {
                 Sleep(50);
-                // Input Report (0x0100)
                 transferred = libusb_control_transfer(handle,
-                    0xA1, 0x01, 0x0100, iface,
+                    0xA1, 0x01, wValue, iface,
                     (unsigned char*)&response, 90, 1000);
 
-                if (transferred == 90 && response.status == 0x02) {
-                    success = true;
+                if (transferred == 90) {
+                    if (response.status == 0x02) {
+                        success = true;
+                        LOG_INFO("Success on Interface " << iface << ", Report ID " << report_id);
+                        break;
+                    }
+                }
+            }
+
+            // Strategy 2: Output Report + Input Report (Fallback)
+            if (!success) {
+                // For Output Reports, type is 0x02.
+                // wValue = 0x0200 | report_id.
+                // But Input Report needs type 0x01.
+
+                int wValueOut = 0x0200 | report_id;
+                int wValueIn = 0x0100 | report_id;
+
+                transferred = libusb_control_transfer(handle,
+                    0x21, 0x09, wValueOut, iface,
+                    (unsigned char*)&request, 90, 1000);
+
+                if (transferred == 90) {
+                    Sleep(50);
+                    transferred = libusb_control_transfer(handle,
+                        0xA1, 0x01, wValueIn, iface,
+                        (unsigned char*)&response, 90, 1000);
+
+                    if (transferred == 90 && response.status == 0x02) {
+                        success = true;
+                        LOG_INFO("Success on Interface " << iface << ", Report ID " << report_id << " (Output/Input strategy)");
+                        break;
+                    }
                 }
             }
         }
@@ -145,12 +208,6 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
             if (workingInterface == iface) {
                 libusb_release_interface(handle, iface);
                 workingInterface = -1;
-                // Try to recover by trying other interfaces in this same call?
-                // For simplicity, we fail this call. The loop won't continue if interfaces had only 1 element.
-                // If interfaces had {0, 1, 2}, it continues.
-                // But if workingInterface was set, interfaces has {workingInterface}.
-                // We should probably fall back to scanning if cache failed?
-                // Yes, ideally. But let's keep it simple.
             } else {
                 libusb_release_interface(handle, iface);
             }
@@ -158,6 +215,94 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     }
 
     return false;
+}
+
+int RazerDevice::GetBatteryLevelNative() {
+    LOG_INFO("Attempting Native Windows HID fallback for PID " << std::hex << pid);
+
+    GUID hidGuid;
+    HidD_GetHidGuid(&hidGuid);
+
+    HDEVINFO hDevInfo = SetupDiGetClassDevs(&hidGuid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (hDevInfo == INVALID_HANDLE_VALUE) return -1;
+
+    SP_DEVICE_INTERFACE_DATA devInfoData;
+    devInfoData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+    int index = 0;
+    while (SetupDiEnumDeviceInterfaces(hDevInfo, NULL, &hidGuid, index++, &devInfoData)) {
+        DWORD requiredSize = 0;
+        SetupDiGetDeviceInterfaceDetail(hDevInfo, &devInfoData, NULL, 0, &requiredSize, NULL);
+
+        std::vector<char> buffer(requiredSize);
+        PSP_DEVICE_INTERFACE_DETAIL_DATA detailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)buffer.data();
+        detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+        if (SetupDiGetDeviceInterfaceDetail(hDevInfo, &devInfoData, detailData, requiredSize, NULL, NULL)) {
+            std::wstring path = detailData->DevicePath;
+            std::wstring pathLower = path;
+            std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
+
+            std::wstringstream wss;
+            wss << L"vid_1532&pid_" << std::setfill(L'0') << std::setw(4) << std::hex << pid;
+            std::wstring vidPid = wss.str();
+
+            if (pathLower.find(vidPid) != std::wstring::npos) {
+                if (pid == 0x0555) {
+                    if (pathLower.find(L"mi_03") == std::wstring::npos || pathLower.find(L"col02") == std::wstring::npos) {
+                        continue;
+                    }
+                }
+
+                // LOG_INFO("Opening native device path"); // Verbose
+
+                HANDLE hFile = CreateFile(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    razer_report request = {0};
+                    request.command_class = 0x07;
+                    request.command_id.id = 0x80;
+                    request.data_size = 0x02;
+                    request.transaction_id.id = 0x1F;
+                    request.crc = CalculateCRC(&request);
+
+                    BYTE reportBuffer[91];
+                    memset(reportBuffer, 0, 91);
+                    reportBuffer[0] = 0x00;
+                    memcpy(reportBuffer + 1, &request, 90);
+
+                    if (HidD_SetFeature(hFile, reportBuffer, 91)) {
+                        Sleep(50);
+                        BYTE responseBuffer[91];
+                        memset(responseBuffer, 0, 91);
+                        responseBuffer[0] = 0x00;
+
+                        if (HidD_GetFeature(hFile, responseBuffer, 91)) {
+                            razer_report* resp = (razer_report*)(responseBuffer + 1);
+                            if (resp->status == 0x02) {
+                                int level = resp->arguments[1];
+                                lastBatteryLevel = (int)((level / 255.0) * 100.0);
+                                LOG_INFO("Native fallback success. Battery: " << lastBatteryLevel);
+                                CloseHandle(hFile);
+                                SetupDiDestroyDeviceInfoList(hDevInfo);
+                                return lastBatteryLevel;
+                            }
+                        } else {
+                             LOG_ERROR("HidD_GetFeature failed: " << GetLastError());
+                        }
+                    } else {
+                        LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
+                    }
+
+                    CloseHandle(hFile);
+                }
+            }
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList(hDevInfo);
+    return -1;
 }
 
 int RazerDevice::GetBatteryLevel() {
@@ -178,6 +323,12 @@ int RazerDevice::GetBatteryLevel() {
             return lastBatteryLevel;
         }
     }
+
+    // Fallback for BlackShark V2 Pro 2023 if libusb failed
+    if (pid == 0x0555) {
+        return GetBatteryLevelNative();
+    }
+
     lastBatteryLevel = -1;
     return -1;
 }
