@@ -85,16 +85,47 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (workingInterface != -1) {
         interfaces.push_back(workingInterface);
     } else {
-        interfaces = {0, 1, 2};
+        struct libusb_config_descriptor *config;
+        int r = libusb_get_active_config_descriptor(device, &config);
+        if (r == 0) {
+            for (int i = 0; i < config->bNumInterfaces; i++) {
+                const struct libusb_interface *inter = &config->interface[i];
+                for (int j = 0; j < inter->num_altsetting; j++) {
+                    const struct libusb_interface_descriptor *interdesc = &inter->altsetting[j];
+
+                    LOG_INFO("Interface " << (int)interdesc->bInterfaceNumber << ": Class "
+                             << (int)interdesc->bInterfaceClass << ", SubClass "
+                             << (int)interdesc->bInterfaceSubClass << ", Protocol "
+                             << (int)interdesc->bInterfaceProtocol);
+
+                    if (interdesc->bInterfaceClass == LIBUSB_CLASS_HID ||
+                        interdesc->bInterfaceClass == LIBUSB_CLASS_VENDOR_SPEC) {
+                        interfaces.push_back(interdesc->bInterfaceNumber);
+                        break;
+                    }
+                }
+            }
+            libusb_free_config_descriptor(config);
+        } else {
+            LOG_ERROR("Failed to get active config descriptor: " << libusb_error_name(r));
+        }
+
+        if (interfaces.empty()) {
+            LOG_INFO("No HID/Vendor interfaces found. Fallback to {0, 1, 2}.");
+            interfaces = {0, 1, 2};
+        }
     }
 
     for (int iface : interfaces) {
+        LOG_INFO("Trying Interface " << iface);
+
         bool claimed = (workingInterface == iface);
         if (!claimed) {
             int r = libusb_claim_interface(handle, iface);
             if (r == 0) {
                 claimed = true;
             } else {
+                LOG_ERROR("Failed to claim interface " << iface << ": " << libusb_error_name(r));
                 continue;
             }
         }
@@ -105,6 +136,11 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
         int transferred = libusb_control_transfer(handle,
             0x21, 0x09, 0x0300, iface,
             (unsigned char*)&request, 90, 1000);
+
+        if (transferred != 90 && transferred != 0) {
+             // LOG_ERROR("Transfer 1 (Feature) failed. Transferred: " << transferred);
+             // Don't spam error here as it might be normal if device expects output report
+        }
 
         if (transferred == 90) {
             Sleep(50);
