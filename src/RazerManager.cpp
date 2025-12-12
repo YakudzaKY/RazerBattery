@@ -76,12 +76,15 @@ void RazerManager::EnumerateDevices() {
                         key = wss.str();
                     }
 
+                    // Convert wstring to string for logging
+                    std::string keyStr(key.begin(), key.end());
+
                     if (existingMap.count(key)) {
                         newMap[key] = existingMap[key];
-                        LOG_INFO("  Kept existing instance for " << key);
+                        LOG_INFO("  Kept existing instance for " << keyStr);
                     } else {
                         newMap[key] = candidate;
-                        LOG_INFO("  Added new instance for " << key);
+                        LOG_INFO("  Added new instance for " << keyStr);
                     }
 
                     // Query battery on the chosen instance
