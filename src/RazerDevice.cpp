@@ -1,14 +1,16 @@
 #include "RazerDevice.h"
 #include "Logger.h"
 #include <hidsdi.h>
+#include <hidpi.h>
 #include <vector>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 
 #pragma comment(lib, "hid.lib")
 
 RazerDevice::RazerDevice(const std::wstring& path, int pid)
-    : devicePath(path), pid(pid), fileHandle(INVALID_HANDLE_VALUE) {
+    : devicePath(path), pid(pid), fileHandle(INVALID_HANDLE_VALUE), featureReportLength(0), usagePage(0), usage(0) {
 }
 
 RazerDevice::~RazerDevice() {
@@ -22,9 +24,21 @@ bool RazerDevice::Open() {
         NULL, OPEN_EXISTING, 0, NULL);
 
     if (fileHandle == INVALID_HANDLE_VALUE) {
-        // LOG_ERROR("Failed to open device: " << GetLastError());
         return false;
     }
+
+    PHIDP_PREPARSED_DATA preparsedData;
+    if (HidD_GetPreparsedData(fileHandle, &preparsedData)) {
+        HIDP_CAPS caps;
+        HidP_GetCaps(preparsedData, &caps);
+        featureReportLength = caps.FeatureReportByteLength;
+        usagePage = caps.UsagePage;
+        usage = caps.Usage;
+        HidD_FreePreparsedData(preparsedData);
+    } else {
+        featureReportLength = 91; // Default fallback
+    }
+
     return true;
 }
 
@@ -56,19 +70,35 @@ unsigned char RazerDevice::CalculateCRC(razer_report* report) {
 bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (fileHandle == INVALID_HANDLE_VALUE) return false;
 
-    // Prepare buffer: Report ID (0x00) + Report Data (90 bytes)
-    std::vector<uint8_t> buffer(91, 0);
+    // Use correct report length
+    size_t len = featureReportLength > 0 ? featureReportLength : 91;
+
+    // Razer Report is 90 bytes + 1 ID byte = 91 bytes.
+    // If device reports larger size, we pad with 0.
+    // If smaller, we might be in trouble, but we'll try.
+    if (len < 91) {
+        // LOG_ERROR("Device feature report length too small: " << len);
+        // Some interfaces are not control interfaces.
+        // But we try anyway?
+    }
+
+    std::vector<uint8_t> buffer(len, 0);
     buffer[0] = 0x00; // Report ID
 
     // Ensure standard values
     if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
-    memcpy(&buffer[1], &request, 90);
+    size_t copyLen = 90;
+    if (len - 1 < 90) copyLen = len - 1;
+
+    memcpy(&buffer[1], &request, copyLen);
 
     // Send Feature Report
     if (!HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
-        LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
+        // Only log if it's a likely control interface (UsagePage 0xFF00 or 0x1) to reduce noise?
+        // No, keep verbose for now.
+        LOG_ERROR("HidD_SetFeature failed: " << GetLastError() << " (Len: " << len << ")");
         return false;
     }
 
@@ -76,7 +106,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     Sleep(50);
 
     // Get Response
-    std::vector<uint8_t> responseBuffer(91, 0);
+    std::vector<uint8_t> responseBuffer(len, 0);
     responseBuffer[0] = 0x00; // Report ID
 
     if (!HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
@@ -84,7 +114,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
         return false;
     }
 
-    memcpy(&response, &responseBuffer[1], 90);
+    memcpy(&response, &responseBuffer[1], 90); // Always try to read 90 bytes back
 
     if (response.status == 0x02) { // RAZER_CMD_SUCCESSFUL
         return true;
@@ -95,7 +125,6 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
 }
 
 int RazerDevice::GetBatteryLevel() {
-    // Try multiple transaction IDs
     uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
     for (uint8_t id : ids) {
@@ -108,7 +137,6 @@ int RazerDevice::GetBatteryLevel() {
         request.transaction_id.id = id;
 
         if (SendRequest(request, response)) {
-            // OpenRazer logic: 0-255 map to 0-100
             int level = response.arguments[1];
             return (int)((level / 255.0) * 100.0);
         }
