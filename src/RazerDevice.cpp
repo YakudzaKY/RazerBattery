@@ -36,7 +36,7 @@ bool RazerDevice::Open() {
         usage = caps.Usage;
         HidD_FreePreparsedData(preparsedData);
     } else {
-        featureReportLength = 91; // Default fallback
+        featureReportLength = 0; // Unknown
     }
 
     return true;
@@ -70,58 +70,74 @@ unsigned char RazerDevice::CalculateCRC(razer_report* report) {
 bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (fileHandle == INVALID_HANDLE_VALUE) return false;
 
-    // Use correct report length
-    size_t len = featureReportLength > 0 ? featureReportLength : 91;
-
-    // Razer Report is 90 bytes + 1 ID byte = 91 bytes.
-    // If device reports larger size, we pad with 0.
-    // If smaller, we might be in trouble, but we'll try.
-    if (len < 91) {
-        // LOG_ERROR("Device feature report length too small: " << len);
-        // Some interfaces are not control interfaces.
-        // But we try anyway?
-    }
-
-    std::vector<uint8_t> buffer(len, 0);
-    buffer[0] = 0x00; // Report ID
-
     // Ensure standard values
     if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
-    size_t copyLen = 90;
-    if (len - 1 < 90) copyLen = len - 1;
+    // Strategy 1: Feature Report
+    if (featureReportLength > 0) {
+        size_t len = featureReportLength;
+        // Check reasonable bounds
+        if (len < 91) {
+             // LOG_DEBUG("Feature Report length small: " << len);
+             // Proceed anyway? Or skip?
+             // If too small, it won't hold the Razer struct.
+             // But we try padding?
+             // If len is small (e.g. 1-2 bytes), it's probably standard HID, not Razer Control.
+        }
 
-    memcpy(&buffer[1], &request, copyLen);
+        std::vector<uint8_t> buffer(len, 0);
+        buffer[0] = 0x00; // Report ID
 
-    // Send Feature Report
-    if (!HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
-        // Only log if it's a likely control interface (UsagePage 0xFF00 or 0x1) to reduce noise?
-        // No, keep verbose for now.
-        LOG_ERROR("HidD_SetFeature failed: " << GetLastError() << " (Len: " << len << ")");
-        return false;
+        size_t copyLen = 90;
+        if (len - 1 < 90) copyLen = len - 1;
+
+        memcpy(&buffer[1], &request, copyLen);
+
+        if (HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
+            Sleep(50);
+
+            std::vector<uint8_t> responseBuffer(len, 0);
+            responseBuffer[0] = 0x00;
+
+            if (HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
+                memcpy(&response, &responseBuffer[1], 90);
+                if (response.status == 0x02) return true;
+                // If status != 0x02, maybe try Output report?
+            }
+        } else {
+             LOG_ERROR("HidD_SetFeature failed: " << GetLastError() << " (Len: " << len << ")");
+        }
     }
 
-    // Wait for device to process (Wireless devices need ~50ms)
-    Sleep(50);
+    // Strategy 2: Output Report (Fallback if Feature failed or not supported)
+    {
+        // LOG_INFO("Trying Output Report fallback...");
+        std::vector<uint8_t> outBuf(91, 0);
+        outBuf[0] = 0x00; // Report ID
+        memcpy(&outBuf[1], &request, 90);
 
-    // Get Response
-    std::vector<uint8_t> responseBuffer(len, 0);
-    responseBuffer[0] = 0x00; // Report ID
+        if (HidD_SetOutputReport(fileHandle, outBuf.data(), (ULONG)outBuf.size())) {
+            Sleep(50);
 
-    if (!HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
-        LOG_ERROR("HidD_GetFeature failed: " << GetLastError());
-        return false;
+            std::vector<uint8_t> inBuf(91, 0);
+            inBuf[0] = 0x00; // Report ID
+
+            // Try GetInputReport
+            if (HidD_GetInputReport(fileHandle, inBuf.data(), (ULONG)inBuf.size())) {
+                 memcpy(&response, &inBuf[1], 90);
+                 if (response.status == 0x02) return true;
+                 LOG_ERROR("OutputReport response status: " << (int)response.status);
+            } else {
+                 LOG_ERROR("HidD_GetInputReport failed: " << GetLastError());
+            }
+        } else {
+             // Only log if we didn't try Feature or Feature failed
+             LOG_ERROR("HidD_SetOutputReport failed: " << GetLastError());
+        }
     }
 
-    memcpy(&response, &responseBuffer[1], 90); // Always try to read 90 bytes back
-
-    if (response.status == 0x02) { // RAZER_CMD_SUCCESSFUL
-        return true;
-    } else {
-        LOG_ERROR("Razer command failed with status: " << (int)response.status);
-        return false;
-    }
+    return false;
 }
 
 int RazerDevice::GetBatteryLevel() {

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <iomanip>
+#include <sstream>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
@@ -40,7 +41,11 @@ void RazerManager::EnumerateDevices() {
     std::map<std::wstring, std::shared_ptr<RazerDevice>> existingMap;
     for (auto& d : devices) {
         std::wstring key = d->GetSerial();
-        if (key.empty()) key = d->GetDevicePath();
+        if (key.empty()) {
+             std::wstringstream wss;
+             wss << L"PID_" << std::hex << d->GetPID();
+             key = wss.str();
+        }
         existingMap[key] = d;
     }
 
@@ -67,9 +72,12 @@ void RazerManager::EnumerateDevices() {
 
                         // Check Usage Page
                         PHIDP_PREPARSED_DATA preparsedData;
+                        USHORT up = 0, u = 0;
                         if (HidD_GetPreparsedData(hFile, &preparsedData)) {
                             HIDP_CAPS caps;
                             HidP_GetCaps(preparsedData, &caps);
+                            up = caps.UsagePage;
+                            u = caps.Usage;
                             LOG_INFO("  UsagePage: 0x" << std::hex << caps.UsagePage << " Usage: 0x" << caps.Usage << std::dec << " Len: " << caps.FeatureReportByteLength);
                             HidD_FreePreparsedData(preparsedData);
                         } else {
@@ -81,11 +89,19 @@ void RazerManager::EnumerateDevices() {
                         auto dev = std::make_shared<RazerDevice>(path, attrib.ProductID);
                         if (dev->Open()) {
                             int batt = dev->GetBatteryLevel();
+
+                            std::wstring key;
+                            std::wstring serial = dev->GetSerial();
+                            if (!serial.empty()) {
+                                key = serial;
+                            } else {
+                                std::wstringstream wss;
+                                wss << L"PID_" << std::hex << attrib.ProductID;
+                                key = wss.str();
+                            }
+
                             if (batt != -1) {
                                 LOG_INFO("  Battery query success: " << batt << "%");
-
-                                std::wstring serial = dev->GetSerial();
-                                std::wstring key = serial.empty() ? path : serial;
 
                                 if (newMap.find(key) == newMap.end()) {
                                     if (existingMap.count(key)) {
@@ -95,16 +111,14 @@ void RazerManager::EnumerateDevices() {
                                         newMap[key] = dev;
                                         LOG_INFO("  Added new instance.");
                                     }
+                                } else {
+                                    LOG_INFO("  Duplicate device (key exists), skipping.");
                                 }
                             } else {
                                 LOG_ERROR("  Battery query failed (returned -1).");
 
                                 // Fallback: Add if it looks like a control interface
-                                USHORT up = dev->GetUsagePage();
-                                USHORT u = dev->GetUsage();
-                                if (up == 0xFF00 || (up == 0x1 && u == 0x0)) {
-                                    std::wstring serial = dev->GetSerial();
-                                    std::wstring key = serial.empty() ? path : serial;
+                                if (up == 0xFF00 || (up == 0x1 && u == 0x0) || (up == 0x1 && u == 0x2)) { // Added 0x1:0x2 just in case
 
                                     if (newMap.find(key) == newMap.end()) {
                                          if (existingMap.count(key)) {
@@ -114,6 +128,8 @@ void RazerManager::EnumerateDevices() {
                                             newMap[key] = dev;
                                             LOG_INFO("  Added new instance (fallback).");
                                         }
+                                    } else {
+                                        LOG_INFO("  Duplicate device (key exists), skipping fallback.");
                                     }
                                 }
                             }
