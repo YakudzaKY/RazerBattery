@@ -14,7 +14,7 @@ An optimized Windows application that monitors connected Razer devices and displ
 
 ## Build Instructions (Инструкция по сборке)
 
-This project uses CMake. You need **CMake** and a C++ compiler (like **Visual Studio** or **MinGW**) installed on Windows.
+This project uses CMake. You need **CMake** and **Visual Studio 2022** (with the "Desktop development with C++" workload) installed on Windows.
 
 ### Quick Build (Windows)
 
@@ -27,7 +27,7 @@ Simply double-click `build.bat`.
     mkdir build
     cd build
     ```
-2.  Generate build files (for Visual Studio):
+2.  Generate build files (ensure you are in a Visual Studio Command Prompt):
     ```bash
     cmake ..
     ```
