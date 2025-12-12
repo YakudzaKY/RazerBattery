@@ -42,3 +42,5 @@
 /build/Makefile
 /build/RazerBatteryTray.exe
 /build/cmake_install.cmake
+/build/CMakeFiles/RazerBatteryTray.dir/src/*.obj
+/build/CMakeFiles/RazerBatteryTray.dir/src/*.d
