@@ -1,56 +1,51 @@
 #include "RazerDevice.h"
 #include "Logger.h"
-#include <hidsdi.h>
-#include <hidpi.h>
+#include <libusb.h>
 #include <vector>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
 
-#pragma comment(lib, "hid.lib")
-
-RazerDevice::RazerDevice(const std::wstring& path, int pid)
-    : devicePath(path), pid(pid), fileHandle(INVALID_HANDLE_VALUE),
-      featureReportLength(0), inputReportLength(0), outputReportLength(0), usagePage(0), usage(0) {
+RazerDevice::RazerDevice(libusb_device* device, int pid)
+    : device(device), handle(nullptr), pid(pid), workingInterface(-1) {
+    if (device) {
+        libusb_ref_device(device);
+    }
 }
 
 RazerDevice::~RazerDevice() {
     Close();
+    if (device) {
+        libusb_unref_device(device);
+        device = nullptr;
+    }
 }
 
 bool RazerDevice::Open() {
-    fileHandle = CreateFileW(devicePath.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        NULL, OPEN_EXISTING, 0, NULL);
+    if (handle) return true; // Already open
 
-    if (fileHandle == INVALID_HANDLE_VALUE) {
+    if (!device) return false;
+
+    int r = libusb_open(device, &handle);
+    if (r != 0) {
         return false;
     }
 
-    PHIDP_PREPARSED_DATA preparsedData;
-    if (HidD_GetPreparsedData(fileHandle, &preparsedData)) {
-        HIDP_CAPS caps;
-        HidP_GetCaps(preparsedData, &caps);
-        featureReportLength = caps.FeatureReportByteLength;
-        inputReportLength = caps.InputReportByteLength;
-        outputReportLength = caps.OutputReportByteLength;
-        usagePage = caps.UsagePage;
-        usage = caps.Usage;
-        HidD_FreePreparsedData(preparsedData);
-    } else {
-        featureReportLength = 0;
-        inputReportLength = 0;
-        outputReportLength = 0;
+    if (libusb_has_capability(LIBUSB_CAP_SUPPORTS_DETACH_KERNEL_DRIVER)) {
+        libusb_set_auto_detach_kernel_driver(handle, 1);
     }
 
     return true;
 }
 
 void RazerDevice::Close() {
-    if (fileHandle != INVALID_HANDLE_VALUE) {
-        CloseHandle(fileHandle);
-        fileHandle = INVALID_HANDLE_VALUE;
+    if (handle) {
+        if (workingInterface != -1) {
+            libusb_release_interface(handle, workingInterface);
+            workingInterface = -1;
+        }
+        libusb_close(handle);
+        handle = nullptr;
     }
 }
 
@@ -73,85 +68,86 @@ unsigned char RazerDevice::CalculateCRC(razer_report* report) {
 }
 
 bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
-    if (fileHandle == INVALID_HANDLE_VALUE) return false;
+    if (!handle) {
+        if (!Open()) return false;
+    }
 
     if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
-    // Strategy 1: Feature Report
-    if (featureReportLength > 0) {
-        size_t len = featureReportLength;
-        std::vector<uint8_t> buffer(len, 0);
-        buffer[0] = 0x00;
-
-        size_t copyLen = 90;
-        if (len - 1 < 90) copyLen = len - 1;
-
-        memcpy(&buffer[1], &request, copyLen);
-
-        if (HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
-            Sleep(50);
-            std::vector<uint8_t> responseBuffer(len, 0);
-            responseBuffer[0] = 0x00;
-            if (HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
-                memcpy(&response, &responseBuffer[1], 90);
-                if (response.status == 0x02) return true;
-            }
-        } else {
-             LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
-        }
+    std::vector<int> interfaces;
+    if (workingInterface != -1) {
+        interfaces.push_back(workingInterface);
+    } else {
+        interfaces = {0, 1, 2};
     }
 
-    // Strategy 2: Output Report (Control)
-    {
-        // Use 91 bytes or OutputReportLength
-        size_t len = outputReportLength > 0 ? outputReportLength : 91;
-        std::vector<uint8_t> outBuf(len, 0);
-        outBuf[0] = 0x00;
-
-        size_t copyLen = 90;
-        if (len - 1 < 90) copyLen = len - 1;
-        memcpy(&outBuf[1], &request, copyLen);
-
-        if (HidD_SetOutputReport(fileHandle, outBuf.data(), (ULONG)outBuf.size())) {
-            Sleep(50);
-            // Read response via Input Report
-            size_t inLen = inputReportLength > 0 ? inputReportLength : 91;
-            std::vector<uint8_t> inBuf(inLen, 0);
-            inBuf[0] = 0x00;
-            if (HidD_GetInputReport(fileHandle, inBuf.data(), (ULONG)inBuf.size())) {
-                 memcpy(&response, &inBuf[1], 90);
-                 if (response.status == 0x02) return true;
+    for (int iface : interfaces) {
+        bool claimed = (workingInterface == iface);
+        if (!claimed) {
+            int r = libusb_claim_interface(handle, iface);
+            if (r == 0) {
+                claimed = true;
             } else {
-                 LOG_ERROR("HidD_GetInputReport failed: " << GetLastError());
+                continue;
             }
+        }
+
+        bool success = false;
+
+        // Strategy 1: Feature Report
+        int transferred = libusb_control_transfer(handle,
+            0x21, 0x09, 0x0300, iface,
+            (unsigned char*)&request, 90, 1000);
+
+        if (transferred == 90) {
+            Sleep(50);
+            transferred = libusb_control_transfer(handle,
+                0xA1, 0x01, 0x0300, iface,
+                (unsigned char*)&response, 90, 1000);
+
+            if (transferred == 90 && response.status == 0x02) {
+                success = true;
+            }
+        }
+
+        // Strategy 2: Output Report + Input Report (Fallback)
+        if (!success) {
+            transferred = libusb_control_transfer(handle,
+                0x21, 0x09, 0x0200, iface,
+                (unsigned char*)&request, 90, 1000);
+
+            if (transferred == 90) {
+                Sleep(50);
+                // Input Report (0x0100)
+                transferred = libusb_control_transfer(handle,
+                    0xA1, 0x01, 0x0100, iface,
+                    (unsigned char*)&response, 90, 1000);
+
+                if (transferred == 90 && response.status == 0x02) {
+                    success = true;
+                }
+            }
+        }
+
+        if (success) {
+            if (workingInterface == -1) {
+                workingInterface = iface;
+            }
+            return true;
         } else {
-             LOG_ERROR("HidD_SetOutputReport failed: " << GetLastError());
-
-             // Strategy 3: WriteFile (Interrupt)
-             // Only try if SetOutputReport failed
-             DWORD bytesWritten = 0;
-             if (WriteFile(fileHandle, outBuf.data(), (DWORD)outBuf.size(), &bytesWritten, NULL)) {
-                 Sleep(50);
-
-                 size_t inLen = inputReportLength > 0 ? inputReportLength : 91;
-                 std::vector<uint8_t> inBuf(inLen, 0);
-                 DWORD bytesRead = 0;
-                 // ReadFile for Interrupt In
-                 if (ReadFile(fileHandle, inBuf.data(), (DWORD)inBuf.size(), &bytesRead, NULL)) {
-                      memcpy(&response, &inBuf[1], 90);
-                      if (response.status == 0x02) return true;
-                 } else {
-                      LOG_ERROR("ReadFile failed: " << GetLastError());
-                      // Try GetInputReport as backup for reading?
-                      if (HidD_GetInputReport(fileHandle, inBuf.data(), (ULONG)inBuf.size())) {
-                           memcpy(&response, &inBuf[1], 90);
-                           if (response.status == 0x02) return true;
-                      }
-                 }
-             } else {
-                 LOG_ERROR("WriteFile failed: " << GetLastError());
-             }
+            if (workingInterface == iface) {
+                libusb_release_interface(handle, iface);
+                workingInterface = -1;
+                // Try to recover by trying other interfaces in this same call?
+                // For simplicity, we fail this call. The loop won't continue if interfaces had only 1 element.
+                // If interfaces had {0, 1, 2}, it continues.
+                // But if workingInterface was set, interfaces has {workingInterface}.
+                // We should probably fall back to scanning if cache failed?
+                // Yes, ideally. But let's keep it simple.
+            } else {
+                libusb_release_interface(handle, iface);
+            }
         }
     }
 
@@ -200,6 +196,24 @@ bool RazerDevice::IsCharging() {
 std::wstring RazerDevice::GetSerial() {
     if (!cachedSerial.empty()) return cachedSerial;
 
+    if (!handle && !Open()) return L"";
+
+    // Method 1: String Descriptor
+    // Get Device Descriptor to find iSerialNumber index
+    struct libusb_device_descriptor desc;
+    if (libusb_get_device_descriptor(device, &desc) == 0) {
+        if (desc.iSerialNumber > 0) {
+            unsigned char data[256];
+            int r = libusb_get_string_descriptor_ascii(handle, desc.iSerialNumber, data, sizeof(data));
+            if (r > 0) {
+                std::string s((char*)data, r);
+                cachedSerial = std::wstring(s.begin(), s.end());
+                return cachedSerial;
+            }
+        }
+    }
+
+    // Method 2: Razer Report 0x82
     uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
     for (uint8_t id : ids) {
@@ -220,6 +234,10 @@ std::wstring RazerDevice::GetSerial() {
         }
     }
 
-    cachedSerial = L"";
+    // fallback
+    std::wstringstream wss;
+    wss << L"PID_" << std::hex << pid;
+    cachedSerial = wss.str();
+
     return cachedSerial;
 }

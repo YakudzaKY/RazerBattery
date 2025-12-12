@@ -1,21 +1,27 @@
 #include "RazerManager.h"
 #include "Logger.h"
-#include <windows.h>
-#include <setupapi.h>
-#include <hidsdi.h>
-#include <algorithm>
+#include <libusb.h>
 #include <map>
-#include <iomanip>
 #include <sstream>
+#include <iostream>
 
-#pragma comment(lib, "setupapi.lib")
-#pragma comment(lib, "hid.lib")
-
-RazerManager::RazerManager() {
+RazerManager::RazerManager() : ctx(nullptr) {
+    int r = libusb_init(&ctx);
+    if (r < 0) {
+        LOG_ERROR("libusb_init failed: " << libusb_error_name(r));
+        ctx = nullptr;
+    } else {
+        // Optional: Set debug level
+        // libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING);
+    }
 }
 
 RazerManager::~RazerManager() {
     devices.clear();
+    if (ctx) {
+        libusb_exit(ctx);
+        ctx = nullptr;
+    }
 }
 
 const std::vector<std::shared_ptr<RazerDevice>>& RazerManager::GetDevices() const {
@@ -23,133 +29,77 @@ const std::vector<std::shared_ptr<RazerDevice>>& RazerManager::GetDevices() cons
 }
 
 void RazerManager::EnumerateDevices() {
-    GUID hidGuid;
-    HidD_GetHidGuid(&hidGuid);
+    if (!ctx) return;
 
-    HDEVINFO hDevInfo = SetupDiGetClassDevs(&hidGuid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-    if (hDevInfo == INVALID_HANDLE_VALUE) {
-        LOG_ERROR("SetupDiGetClassDevs failed");
+    LOG_INFO("Enumerating devices with libusb...");
+
+    libusb_device** list;
+    ssize_t cnt = libusb_get_device_list(ctx, &list);
+    if (cnt < 0) {
+        LOG_ERROR("libusb_get_device_list failed: " << libusb_error_name((int)cnt));
         return;
     }
 
-    SP_DEVICE_INTERFACE_DATA devInfoData;
-    devInfoData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+    // Map existing devices by Serial/Key to preserve instances
+    std::map<std::wstring, std::shared_ptr<RazerDevice>> existingMap;
+    for (auto& d : devices) {
+        std::wstring s = d->GetSerial();
+        if (!s.empty()) {
+            existingMap[s] = d;
+        } else {
+            // If serial is empty (failed to read), maybe map by PID + some index?
+            // Or just don't map.
+            // Fallback key used below:
+            std::wstringstream wss;
+            wss << L"PID_" << std::hex << d->GetPID();
+            existingMap[wss.str()] = d;
+        }
+    }
 
     std::map<std::wstring, std::shared_ptr<RazerDevice>> newMap;
 
-    // Existing devices map for reuse
-    std::map<std::wstring, std::shared_ptr<RazerDevice>> existingMap;
-    for (auto& d : devices) {
-        std::wstring key = d->GetSerial();
-        if (key.empty()) {
-             std::wstringstream wss;
-             wss << L"PID_" << std::hex << d->GetPID();
-             key = wss.str();
-        }
-        existingMap[key] = d;
-    }
+    for (ssize_t i = 0; i < cnt; i++) {
+        libusb_device* device = list[i];
+        struct libusb_device_descriptor desc;
+        if (libusb_get_device_descriptor(device, &desc) == 0) {
+            if (desc.idVendor == 0x1532) {
+                // Found Razer Device
+                LOG_INFO("Found Razer Device [PID: 0x" << std::hex << desc.idProduct << std::dec << "]");
 
-    int deviceIndex = 0;
-    for (int i = 0; SetupDiEnumDeviceInterfaces(hDevInfo, NULL, &hidGuid, i, &devInfoData); i++) {
-        DWORD requiredSize = 0;
-        SetupDiGetDeviceInterfaceDetail(hDevInfo, &devInfoData, NULL, 0, &requiredSize, NULL);
+                auto candidate = std::make_shared<RazerDevice>(device, desc.idProduct);
+                if (candidate->Open()) {
+                    std::wstring serial = candidate->GetSerial();
+                    std::wstring key = serial;
+                    if (key.empty()) {
+                        std::wstringstream wss;
+                        wss << L"PID_" << std::hex << desc.idProduct;
+                        key = wss.str();
+                    }
 
-        std::vector<BYTE> buffer(requiredSize);
-        PSP_DEVICE_INTERFACE_DETAIL_DATA detailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)buffer.data();
-        detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
-
-        if (SetupDiGetDeviceInterfaceDetail(hDevInfo, &devInfoData, detailData, requiredSize, NULL, NULL)) {
-            std::wstring path = (wchar_t*)detailData->DevicePath;
-
-            HANDLE hFile = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-            if (hFile != INVALID_HANDLE_VALUE) {
-                HIDD_ATTRIBUTES attrib;
-                attrib.Size = sizeof(HIDD_ATTRIBUTES);
-                if (HidD_GetAttributes(hFile, &attrib)) {
-                    if (attrib.VendorID == 0x1532) {
-                        // Found a Razer device
-                        LOG_INFO("Found Razer Device [PID: 0x" << std::hex << attrib.ProductID << std::dec << "]");
-
-                        // Check Usage Page
-                        PHIDP_PREPARSED_DATA preparsedData;
-                        USHORT up = 0, u = 0;
-                        if (HidD_GetPreparsedData(hFile, &preparsedData)) {
-                            HIDP_CAPS caps;
-                            HidP_GetCaps(preparsedData, &caps);
-                            up = caps.UsagePage;
-                            u = caps.Usage;
-                            LOG_INFO("  UsagePage: 0x" << std::hex << caps.UsagePage << " Usage: 0x" << caps.Usage << std::dec << " Len: " << caps.FeatureReportByteLength);
-                            HidD_FreePreparsedData(preparsedData);
-                        } else {
-                            LOG_INFO("  Could not get Preparsed Data.");
-                        }
-
-                        CloseHandle(hFile);
-
-                        auto dev = std::make_shared<RazerDevice>(path, attrib.ProductID);
-                        if (dev->Open()) {
-                            int batt = dev->GetBatteryLevel();
-
-                            std::wstring key;
-                            std::wstring serial = dev->GetSerial();
-                            if (!serial.empty()) {
-                                key = serial;
-                            } else {
-                                std::wstringstream wss;
-                                wss << L"PID_" << std::hex << attrib.ProductID;
-                                key = wss.str();
-                            }
-
-                            if (batt != -1) {
-                                LOG_INFO("  Battery query success: " << batt << "%");
-
-                                if (newMap.find(key) == newMap.end()) {
-                                    if (existingMap.count(key)) {
-                                        newMap[key] = existingMap[key];
-                                        LOG_INFO("  Kept existing instance.");
-                                    } else {
-                                        newMap[key] = dev;
-                                        LOG_INFO("  Added new instance.");
-                                    }
-                                } else {
-                                    LOG_INFO("  Duplicate device (key exists), skipping.");
-                                }
-                            } else {
-                                LOG_ERROR("  Battery query failed (returned -1).");
-
-                                // Fallback: Add if it looks like a control interface
-                                if (up == 0xFF00 || (up == 0x1 && u == 0x0) || (up == 0x1 && u == 0x2)) { // Added 0x1:0x2 just in case
-
-                                    if (newMap.find(key) == newMap.end()) {
-                                         if (existingMap.count(key)) {
-                                            newMap[key] = existingMap[key];
-                                            LOG_INFO("  Kept existing instance (fallback).");
-                                        } else {
-                                            newMap[key] = dev;
-                                            LOG_INFO("  Added new instance (fallback).");
-                                        }
-                                    } else {
-                                        LOG_INFO("  Duplicate device (key exists), skipping fallback.");
-                                    }
-                                }
-                            }
-                            dev->Close();
-                        } else {
-                            LOG_ERROR("  Failed to open device (Access Denied?).");
-                        }
+                    if (existingMap.count(key)) {
+                        newMap[key] = existingMap[key];
+                        LOG_INFO("  Kept existing instance for " << key);
                     } else {
-                        CloseHandle(hFile);
+                        newMap[key] = candidate;
+                        LOG_INFO("  Added new instance for " << key);
+                    }
+
+                    // Query battery on the chosen instance
+                    auto dev = newMap[key];
+                    int batt = dev->GetBatteryLevel();
+                    if (batt != -1) {
+                         LOG_INFO("  Battery: " << batt << "%");
+                    } else {
+                         LOG_ERROR("  Battery query failed.");
                     }
                 } else {
-                    CloseHandle(hFile);
+                    LOG_ERROR("  Failed to open device.");
                 }
-            } else {
-                // LOG_ERROR("Failed to open device handle for attributes query.");
             }
         }
     }
 
-    SetupDiDestroyDeviceInfoList(hDevInfo);
+    libusb_free_device_list(list, 1); // Unref devices in list
 
     devices.clear();
     for (auto& pair : newMap) {
