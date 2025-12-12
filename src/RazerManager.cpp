@@ -79,27 +79,60 @@ void RazerManager::EnumerateDevices() {
                     // Convert wstring to string for logging
                     std::string keyStr(key.begin(), key.end());
 
+                    // Determine which object to consider (Reuse existing or use new candidate)
+                    std::shared_ptr<RazerDevice> deviceToConsider = candidate;
+                    bool reused = false;
+                    bool physicalChange = false;
+
                     if (existingMap.count(key)) {
                         auto existing = existingMap[key];
                         if (existing->IsSameDevice(device)) {
-                            newMap[key] = existing;
-                            LOG_INFO("  Kept existing instance for " << keyStr);
+                            deviceToConsider = existing;
+                            reused = true;
                         } else {
-                            newMap[key] = candidate;
-                            LOG_INFO("  Replaced instance for " << keyStr << " (Physical connection changed)");
+                            physicalChange = true;
                         }
-                    } else {
-                        newMap[key] = candidate;
-                        LOG_INFO("  Added new instance for " << keyStr);
                     }
 
-                    // Query battery on the chosen instance
-                    auto dev = newMap[key];
-                    int batt = dev->GetBatteryLevel();
-                    if (batt != -1) {
-                         LOG_INFO("  Battery: " << batt << "%");
+                    // Check for collision in the current enumeration pass (e.g. Wired + Wireless interfaces)
+                    if (newMap.count(key)) {
+                        auto currentInMap = newMap[key];
+
+                        // We must query the new candidate's battery to compare
+                        int battCandidate = deviceToConsider->GetBatteryLevel();
+                        int battCurrent = currentInMap->GetLastBatteryLevel();
+
+                        if (battCurrent == -1 && battCandidate != -1) {
+                            newMap[key] = deviceToConsider;
+                            LOG_INFO("  Replaced collision for " << keyStr << " (Better battery source found)");
+                            LOG_INFO("  Battery: " << battCandidate << "%");
+                        } else {
+                            LOG_INFO("  Ignored collision for " << keyStr << " (Existing source preferred)");
+                            if (battCandidate != -1) {
+                                LOG_INFO("  (Ignored device had Battery: " << battCandidate << "%)");
+                            } else {
+                                LOG_ERROR("  (Ignored device battery query failed)");
+                            }
+                        }
                     } else {
-                         LOG_ERROR("  Battery query failed.");
+                        // No collision, add to map
+                        newMap[key] = deviceToConsider;
+
+                        if (reused) {
+                            LOG_INFO("  Kept existing instance for " << keyStr);
+                        } else if (physicalChange) {
+                            LOG_INFO("  Replaced instance for " << keyStr << " (Physical connection changed)");
+                        } else {
+                            LOG_INFO("  Added new instance for " << keyStr);
+                        }
+
+                        // Query battery
+                        int batt = deviceToConsider->GetBatteryLevel();
+                        if (batt != -1) {
+                             LOG_INFO("  Battery: " << batt << "%");
+                        } else {
+                             LOG_ERROR("  Battery query failed.");
+                        }
                     }
                 } else {
                     LOG_ERROR("  Failed to open device.");

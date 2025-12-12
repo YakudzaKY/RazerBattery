@@ -174,9 +174,11 @@ int RazerDevice::GetBatteryLevel() {
 
         if (SendRequest(request, response)) {
             int level = response.arguments[1];
-            return (int)((level / 255.0) * 100.0);
+            lastBatteryLevel = (int)((level / 255.0) * 100.0);
+            return lastBatteryLevel;
         }
     }
+    lastBatteryLevel = -1;
     return -1;
 }
 
