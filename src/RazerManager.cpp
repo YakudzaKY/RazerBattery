@@ -5,6 +5,7 @@
 #include <hidsdi.h>
 #include <algorithm>
 #include <map>
+#include <iomanip>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
@@ -33,18 +34,17 @@ void RazerManager::EnumerateDevices() {
     SP_DEVICE_INTERFACE_DATA devInfoData;
     devInfoData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
-    std::vector<std::shared_ptr<RazerDevice>> newDevicesVector;
     std::map<std::wstring, std::shared_ptr<RazerDevice>> newMap;
 
     // Existing devices map for reuse
     std::map<std::wstring, std::shared_ptr<RazerDevice>> existingMap;
     for (auto& d : devices) {
-        // We use serial as key if available, else path
         std::wstring key = d->GetSerial();
         if (key.empty()) key = d->GetDevicePath();
         existingMap[key] = d;
     }
 
+    int deviceIndex = 0;
     for (int i = 0; SetupDiEnumDeviceInterfaces(hDevInfo, NULL, &hidGuid, i, &devInfoData); i++) {
         DWORD requiredSize = 0;
         SetupDiGetDeviceInterfaceDetail(hDevInfo, &devInfoData, NULL, 0, &requiredSize, NULL);
@@ -62,34 +62,48 @@ void RazerManager::EnumerateDevices() {
                 attrib.Size = sizeof(HIDD_ATTRIBUTES);
                 if (HidD_GetAttributes(hFile, &attrib)) {
                     if (attrib.VendorID == 0x1532) {
-                        // It's a Razer device.
-                        // Check if we should ignore it based on Type (e.g. unknown?)
-                        // No, try to query it.
+                        // Found a Razer device
+                        LOG_INFO("Found Razer Device [PID: 0x" << std::hex << attrib.ProductID << std::dec << "]");
 
-                        // We need to Open it with R/W to send commands.
+                        // Check Usage Page
+                        PHIDP_PREPARSED_DATA preparsedData;
+                        if (HidD_GetPreparsedData(hFile, &preparsedData)) {
+                            HIDP_CAPS caps;
+                            HidP_GetCaps(preparsedData, &caps);
+                            LOG_INFO("  UsagePage: 0x" << std::hex << caps.UsagePage << " Usage: 0x" << caps.Usage << std::dec);
+                            HidD_FreePreparsedData(preparsedData);
+                        } else {
+                            LOG_INFO("  Could not get Preparsed Data.");
+                        }
+
                         CloseHandle(hFile);
 
-                        // Create temporary device to check
                         auto dev = std::make_shared<RazerDevice>(path, attrib.ProductID);
                         if (dev->Open()) {
-                            // Check if it supports battery query
-                            if (dev->GetBatteryLevel() != -1) {
+                            int batt = dev->GetBatteryLevel();
+                            if (batt != -1) {
+                                LOG_INFO("  Battery query success: " << batt << "%");
+
                                 std::wstring serial = dev->GetSerial();
                                 std::wstring key = serial.empty() ? path : serial;
 
                                 if (newMap.find(key) == newMap.end()) {
-                                    // Not found in new map yet (deduplicate interfaces)
-
-                                    // Check if exists in old map
                                     if (existingMap.count(key)) {
                                         newMap[key] = existingMap[key];
-                                        // Update path if needed? No, serial matches.
+                                        LOG_INFO("  Kept existing instance.");
                                     } else {
                                         newMap[key] = dev;
+                                        LOG_INFO("  Added new instance.");
                                     }
+                                } else {
+                                    LOG_INFO("  Duplicate serial/interface, skipping.");
                                 }
+                            } else {
+                                LOG_ERROR("  Battery query failed (returned -1).");
                             }
                             dev->Close();
+                        } else {
+                            LOG_ERROR("  Failed to open device (Access Denied?).");
                         }
                     } else {
                         CloseHandle(hFile);
@@ -97,6 +111,8 @@ void RazerManager::EnumerateDevices() {
                 } else {
                     CloseHandle(hFile);
                 }
+            } else {
+                // LOG_ERROR("Failed to open device handle for attributes query.");
             }
         }
     }
@@ -107,4 +123,5 @@ void RazerManager::EnumerateDevices() {
     for (auto& pair : newMap) {
         devices.push_back(pair.second);
     }
+    LOG_INFO("Enumeration complete. Total devices: " << devices.size());
 }
