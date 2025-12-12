@@ -18,6 +18,9 @@ public:
     // Returns 0-100, or -1 if unknown/error.
     int GetBatteryLevel();
 
+    // Returns the last successfully queried battery level, or -1.
+    int GetLastBatteryLevel() const { return lastBatteryLevel; }
+
     // Returns true if charging.
     bool IsCharging();
 
@@ -34,6 +37,7 @@ private:
     int pid;
     std::wstring cachedSerial;
     int workingInterface;
+    int lastBatteryLevel = -1;
 
     bool SendRequest(razer_report& request, razer_report& response);
     unsigned char CalculateCRC(razer_report* report);
