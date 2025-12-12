@@ -41,4 +41,5 @@ private:
 
     bool SendRequest(razer_report& request, razer_report& response);
     unsigned char CalculateCRC(razer_report* report);
+    int GetBatteryLevelNative();
 };
