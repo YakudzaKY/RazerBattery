@@ -21,6 +21,12 @@ RazerDevice::~RazerDevice() {
     }
 }
 
+bool RazerDevice::IsSameDevice(libusb_device* other) {
+    if (!device || !other) return false;
+    return (libusb_get_bus_number(device) == libusb_get_bus_number(other)) &&
+           (libusb_get_device_address(device) == libusb_get_device_address(other));
+}
+
 bool RazerDevice::Open() {
     if (handle) return true; // Already open
 

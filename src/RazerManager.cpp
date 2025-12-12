@@ -80,8 +80,14 @@ void RazerManager::EnumerateDevices() {
                     std::string keyStr(key.begin(), key.end());
 
                     if (existingMap.count(key)) {
-                        newMap[key] = existingMap[key];
-                        LOG_INFO("  Kept existing instance for " << keyStr);
+                        auto existing = existingMap[key];
+                        if (existing->IsSameDevice(device)) {
+                            newMap[key] = existing;
+                            LOG_INFO("  Kept existing instance for " << keyStr);
+                        } else {
+                            newMap[key] = candidate;
+                            LOG_INFO("  Replaced instance for " << keyStr << " (Physical connection changed)");
+                        }
                     } else {
                         newMap[key] = candidate;
                         LOG_INFO("  Added new instance for " << keyStr);

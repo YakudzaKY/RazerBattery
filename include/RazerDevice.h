@@ -22,6 +22,7 @@ public:
     bool IsCharging();
 
     std::wstring GetSerial();
+    bool IsSameDevice(struct libusb_device* other);
 
     int GetPID() const { return pid; }
     RazerDeviceType GetType() const;
