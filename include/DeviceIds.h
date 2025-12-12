@@ -692,6 +692,9 @@
 #ifndef USB_DEVICE_ID_RAZER_KRAKEN_ULTIMATE
 #define USB_DEVICE_ID_RAZER_KRAKEN_ULTIMATE 0x0527
 #endif
+#ifndef USB_DEVICE_ID_RAZER_BLACKSHARK_V2_PRO_2023
+#define USB_DEVICE_ID_RAZER_BLACKSHARK_V2_PRO_2023 0x0555
+#endif
 #ifndef USB_DEVICE_ID_RAZER_KRAKEN_KITTY_V2
 #define USB_DEVICE_ID_RAZER_KRAKEN_KITTY_V2 0x0560
 #endif
@@ -1010,6 +1013,7 @@ inline RazerDeviceType GetRazerDeviceType(int pid) {
     case USB_DEVICE_ID_RAZER_KRAKEN_CLASSIC_ALT: return RazerDeviceType::Headset;
     case USB_DEVICE_ID_RAZER_KRAKEN_V2: return RazerDeviceType::Headset;
     case USB_DEVICE_ID_RAZER_KRAKEN_ULTIMATE: return RazerDeviceType::Headset;
+    case USB_DEVICE_ID_RAZER_BLACKSHARK_V2_PRO_2023: return RazerDeviceType::Headset;
     case USB_DEVICE_ID_RAZER_KRAKEN_KITTY_V2: return RazerDeviceType::Headset;
     case USB_DEVICE_ID_RAZER_FIREFLY_HYPERFLUX: return RazerDeviceType::Accessory;
     case USB_DEVICE_ID_RAZER_MOUSE_DOCK: return RazerDeviceType::Accessory;
