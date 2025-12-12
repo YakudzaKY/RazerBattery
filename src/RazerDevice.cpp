@@ -68,7 +68,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
 
     // Send Feature Report
     if (!HidD_SetFeature(fileHandle, buffer.data(), (ULONG)buffer.size())) {
-        // LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
+        LOG_ERROR("HidD_SetFeature failed: " << GetLastError());
         return false;
     }
 
@@ -80,7 +80,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     responseBuffer[0] = 0x00; // Report ID
 
     if (!HidD_GetFeature(fileHandle, responseBuffer.data(), (ULONG)responseBuffer.size())) {
-        // LOG_ERROR("HidD_GetFeature failed: " << GetLastError());
+        LOG_ERROR("HidD_GetFeature failed: " << GetLastError());
         return false;
     }
 
@@ -89,37 +89,48 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (response.status == 0x02) { // RAZER_CMD_SUCCESSFUL
         return true;
     } else {
-        // LOG_ERROR("Razer command failed with status: " << (int)response.status);
+        LOG_ERROR("Razer command failed with status: " << (int)response.status);
         return false;
     }
 }
 
 int RazerDevice::GetBatteryLevel() {
-    razer_report request = {0};
-    razer_report response = {0};
+    // Try multiple transaction IDs
+    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
-    request.command_class = 0x07; // Misc
-    request.command_id.id = 0x80; // Get Battery
-    request.data_size = 0x02;
+    for (uint8_t id : ids) {
+        razer_report request = {0};
+        razer_report response = {0};
 
-    if (SendRequest(request, response)) {
-        // OpenRazer logic: 0-255 map to 0-100
-        int level = response.arguments[1];
-        return (int)((level / 255.0) * 100.0);
+        request.command_class = 0x07; // Misc
+        request.command_id.id = 0x80; // Get Battery
+        request.data_size = 0x02;
+        request.transaction_id.id = id;
+
+        if (SendRequest(request, response)) {
+            // OpenRazer logic: 0-255 map to 0-100
+            int level = response.arguments[1];
+            return (int)((level / 255.0) * 100.0);
+        }
     }
     return -1;
 }
 
 bool RazerDevice::IsCharging() {
-    razer_report request = {0};
-    razer_report response = {0};
+    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
-    request.command_class = 0x07;
-    request.command_id.id = 0x84; // Get Charging Status
-    request.data_size = 0x02;
+    for (uint8_t id : ids) {
+        razer_report request = {0};
+        razer_report response = {0};
 
-    if (SendRequest(request, response)) {
-        return response.arguments[1] == 1;
+        request.command_class = 0x07;
+        request.command_id.id = 0x84; // Get Charging Status
+        request.data_size = 0x02;
+        request.transaction_id.id = id;
+
+        if (SendRequest(request, response)) {
+            return response.arguments[1] == 1;
+        }
     }
     return false;
 }
@@ -127,20 +138,26 @@ bool RazerDevice::IsCharging() {
 std::wstring RazerDevice::GetSerial() {
     if (!cachedSerial.empty()) return cachedSerial;
 
-    razer_report request = {0};
-    razer_report response = {0};
-    request.command_class = 0x00;
-    request.command_id.id = 0x82; // Get Serial
-    request.data_size = 0x16; // 22 bytes
+    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
-    if (SendRequest(request, response)) {
-        char serial[23];
-        memcpy(serial, response.arguments, 22);
-        serial[22] = '\0';
-        std::string s(serial);
-        cachedSerial = std::wstring(s.begin(), s.end());
-    } else {
-        cachedSerial = L"";
+    for (uint8_t id : ids) {
+        razer_report request = {0};
+        razer_report response = {0};
+        request.command_class = 0x00;
+        request.command_id.id = 0x82; // Get Serial
+        request.data_size = 0x16; // 22 bytes
+        request.transaction_id.id = id;
+
+        if (SendRequest(request, response)) {
+            char serial[23];
+            memcpy(serial, response.arguments, 22);
+            serial[22] = '\0';
+            std::string s(serial);
+            cachedSerial = std::wstring(s.begin(), s.end());
+            return cachedSerial;
+        }
     }
+
+    cachedSerial = L"";
     return cachedSerial;
 }
