@@ -70,7 +70,7 @@ void RazerManager::EnumerateDevices() {
                         if (HidD_GetPreparsedData(hFile, &preparsedData)) {
                             HIDP_CAPS caps;
                             HidP_GetCaps(preparsedData, &caps);
-                            LOG_INFO("  UsagePage: 0x" << std::hex << caps.UsagePage << " Usage: 0x" << caps.Usage << std::dec);
+                            LOG_INFO("  UsagePage: 0x" << std::hex << caps.UsagePage << " Usage: 0x" << caps.Usage << std::dec << " Len: " << caps.FeatureReportByteLength);
                             HidD_FreePreparsedData(preparsedData);
                         } else {
                             LOG_INFO("  Could not get Preparsed Data.");
@@ -95,11 +95,27 @@ void RazerManager::EnumerateDevices() {
                                         newMap[key] = dev;
                                         LOG_INFO("  Added new instance.");
                                     }
-                                } else {
-                                    LOG_INFO("  Duplicate serial/interface, skipping.");
                                 }
                             } else {
                                 LOG_ERROR("  Battery query failed (returned -1).");
+
+                                // Fallback: Add if it looks like a control interface
+                                USHORT up = dev->GetUsagePage();
+                                USHORT u = dev->GetUsage();
+                                if (up == 0xFF00 || (up == 0x1 && u == 0x0)) {
+                                    std::wstring serial = dev->GetSerial();
+                                    std::wstring key = serial.empty() ? path : serial;
+
+                                    if (newMap.find(key) == newMap.end()) {
+                                         if (existingMap.count(key)) {
+                                            newMap[key] = existingMap[key];
+                                            LOG_INFO("  Kept existing instance (fallback).");
+                                        } else {
+                                            newMap[key] = dev;
+                                            LOG_INFO("  Added new instance (fallback).");
+                                        }
+                                    }
+                                }
                             }
                             dev->Close();
                         } else {

@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 #include <windows.h>
+#include <hidsdi.h>
+#include <hidpi.h>
 #include "DeviceIds.h"
 #include "RazerProtocol.h"
 
@@ -25,11 +27,18 @@ public:
     RazerDeviceType GetType() const;
     std::wstring GetName() const;
 
+    USHORT GetUsagePage() const { return usagePage; }
+    USHORT GetUsage() const { return usage; }
+
 private:
     std::wstring devicePath;
     HANDLE fileHandle;
     int pid;
     std::wstring cachedSerial;
+
+    USHORT featureReportLength;
+    USHORT usagePage;
+    USHORT usage;
 
     bool SendRequest(razer_report& request, razer_report& response);
     unsigned char CalculateCRC(razer_report* report);
