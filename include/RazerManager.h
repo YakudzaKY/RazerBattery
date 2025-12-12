@@ -3,6 +3,8 @@
 #include <memory>
 #include "RazerDevice.h"
 
+struct libusb_context;
+
 class RazerManager {
 public:
     RazerManager();
@@ -13,4 +15,5 @@ public:
 
 private:
     std::vector<std::shared_ptr<RazerDevice>> devices;
+    libusb_context* ctx;
 };
