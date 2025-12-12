@@ -139,42 +139,55 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
 
         bool success = false;
 
-        // Strategy 1: Feature Report
-        int transferred = libusb_control_transfer(handle,
-            0x21, 0x09, 0x0300, iface,
-            (unsigned char*)&request, 90, 1000);
+        std::vector<int> report_ids = {0x00, 0x01, 0x02};
 
-        if (transferred != 90 && transferred != 0) {
-             // LOG_ERROR("Transfer 1 (Feature) failed. Transferred: " << transferred);
-             // Don't spam error here as it might be normal if device expects output report
-        }
+        for (int report_id : report_ids) {
+            // Strategy 1: Feature Report
+            int wValue = 0x0300 | report_id;
 
-        if (transferred == 90) {
-            Sleep(50);
-            transferred = libusb_control_transfer(handle,
-                0xA1, 0x01, 0x0300, iface,
-                (unsigned char*)&response, 90, 1000);
-
-            if (transferred == 90 && response.status == 0x02) {
-                success = true;
-            }
-        }
-
-        // Strategy 2: Output Report + Input Report (Fallback)
-        if (!success) {
-            transferred = libusb_control_transfer(handle,
-                0x21, 0x09, 0x0200, iface,
+            int transferred = libusb_control_transfer(handle,
+                0x21, 0x09, wValue, iface,
                 (unsigned char*)&request, 90, 1000);
 
             if (transferred == 90) {
                 Sleep(50);
-                // Input Report (0x0100)
                 transferred = libusb_control_transfer(handle,
-                    0xA1, 0x01, 0x0100, iface,
+                    0xA1, 0x01, wValue, iface,
                     (unsigned char*)&response, 90, 1000);
 
-                if (transferred == 90 && response.status == 0x02) {
-                    success = true;
+                if (transferred == 90) {
+                    if (response.status == 0x02) {
+                        success = true;
+                        LOG_INFO("Success on Interface " << iface << ", Report ID " << report_id);
+                        break;
+                    }
+                }
+            }
+
+            // Strategy 2: Output Report + Input Report (Fallback)
+            if (!success) {
+                // For Output Reports, type is 0x02.
+                // wValue = 0x0200 | report_id.
+                // But Input Report needs type 0x01.
+
+                int wValueOut = 0x0200 | report_id;
+                int wValueIn = 0x0100 | report_id;
+
+                transferred = libusb_control_transfer(handle,
+                    0x21, 0x09, wValueOut, iface,
+                    (unsigned char*)&request, 90, 1000);
+
+                if (transferred == 90) {
+                    Sleep(50);
+                    transferred = libusb_control_transfer(handle,
+                        0xA1, 0x01, wValueIn, iface,
+                        (unsigned char*)&response, 90, 1000);
+
+                    if (transferred == 90 && response.status == 0x02) {
+                        success = true;
+                        LOG_INFO("Success on Interface " << iface << ", Report ID " << report_id << " (Output/Input strategy)");
+                        break;
+                    }
                 }
             }
         }
@@ -188,12 +201,6 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
             if (workingInterface == iface) {
                 libusb_release_interface(handle, iface);
                 workingInterface = -1;
-                // Try to recover by trying other interfaces in this same call?
-                // For simplicity, we fail this call. The loop won't continue if interfaces had only 1 element.
-                // If interfaces had {0, 1, 2}, it continues.
-                // But if workingInterface was set, interfaces has {workingInterface}.
-                // We should probably fall back to scanning if cache failed?
-                // Yes, ideally. But let's keep it simple.
             } else {
                 libusb_release_interface(handle, iface);
             }
