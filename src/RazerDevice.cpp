@@ -5,6 +5,8 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
 
 RazerDevice::RazerDevice(libusb_device* device, int pid)
     : device(device), handle(nullptr), pid(pid), workingInterface(-1) {
@@ -178,21 +180,39 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
 }
 
 int RazerDevice::GetBatteryLevel() {
+    struct BatteryQuery {
+        uint8_t commandClass;
+        uint8_t commandId;
+        uint8_t dataSize;
+        bool scaleFromByte;
+    };
+
+    // 0x07/0x80 — классический запрос (0-255), 0x0F/0x02 — снифф с BlackShark V2 Pro 2023 (PID 0x0555), сразу отдаёт проценты.
+    const BatteryQuery queries[] = {
+        {0x07, 0x80, 0x02, true},
+        {0x0F, 0x02, 0x02, false},
+    };
+
     uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
-    for (uint8_t id : ids) {
-        razer_report request = {0};
-        razer_report response = {0};
+    for (const auto& query : queries) {
+        for (uint8_t id : ids) {
+            razer_report request = {0};
+            razer_report response = {0};
 
-        request.command_class = 0x07; // Misc
-        request.command_id.id = 0x80; // Get Battery
-        request.data_size = 0x02;
-        request.transaction_id.id = id;
+            request.command_class = query.commandClass;
+            request.command_id.id = query.commandId;
+            request.data_size = query.dataSize;
+            request.transaction_id.id = id;
 
-        if (SendRequest(request, response)) {
-            int level = response.arguments[1];
-            lastBatteryLevel = (int)((level / 255.0) * 100.0);
-            return lastBatteryLevel;
+            if (SendRequest(request, response)) {
+                int level = query.scaleFromByte
+                    ? static_cast<int>(std::lround((response.arguments[1] / 255.0) * 100.0))
+                    : static_cast<int>(response.arguments[1]);
+
+                lastBatteryLevel = std::clamp(level, 0, 100);
+                return lastBatteryLevel;
+            }
         }
     }
     lastBatteryLevel = -1;
