@@ -81,11 +81,28 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
+    libusb_config_descriptor* config = nullptr;
+    uint8_t interfaceCount = 0;
+    if (libusb_get_active_config_descriptor(device, &config) == 0 && config) {
+        interfaceCount = config->bNumInterfaces;
+        // Логируем количество доступных интерфейсов, чтобы понимать, что мы пробуем
+        LOG_DEBUG("Интерфейсов в активной конфигурации: " << static_cast<int>(interfaceCount));
+        libusb_free_config_descriptor(config);
+    } else {
+        LOG_DEBUG("Не удалось прочитать активную конфигурацию, используем интерфейсы по умолчанию");
+    }
+
     std::vector<int> interfaces;
     if (workingInterface != -1) {
         interfaces.push_back(workingInterface);
     } else {
-        interfaces = {0, 1, 2};
+        if (interfaceCount > 0) {
+            for (uint8_t i = 0; i < interfaceCount; ++i) {
+                interfaces.push_back(static_cast<int>(i));
+            }
+        } else {
+            interfaces = {0, 1, 2, 3, 4};
+        }
     }
 
     for (int iface : interfaces) {
