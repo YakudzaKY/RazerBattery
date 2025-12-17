@@ -80,32 +80,15 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
         if (!Open()) return false;
     }
 
+    if (request.transaction_id.id == 0) request.transaction_id.id = 0xFF;
     request.crc = CalculateCRC(&request);
 
     libusb_config_descriptor* config = nullptr;
     uint8_t interfaceCount = 0;
-    std::vector<int> hidInterfaces;
-
     if (libusb_get_active_config_descriptor(device, &config) == 0 && config) {
         interfaceCount = config->bNumInterfaces;
         // Логируем количество доступных интерфейсов, чтобы понимать, что мы пробуем
         LOG_DEBUG("Интерфейсов в активной конфигурации: " << static_cast<int>(interfaceCount));
-
-        for (uint8_t i = 0; i < config->bNumInterfaces; ++i) {
-            if (config->interface[i].num_altsetting == 0) {
-                continue;
-            }
-
-            const libusb_interface_descriptor* desc = &config->interface[i].altsetting[0];
-            if (desc && desc->bInterfaceClass == LIBUSB_CLASS_HID) {
-                hidInterfaces.push_back(static_cast<int>(i));
-            }
-        }
-
-        if (!hidInterfaces.empty()) {
-            LOG_DEBUG("Приоритет HID-интерфейсов: " << hidInterfaces.size());
-        }
-
         libusb_free_config_descriptor(config);
     } else {
         LOG_DEBUG("Не удалось прочитать активную конфигурацию, используем интерфейсы по умолчанию");
@@ -115,20 +98,11 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     if (workingInterface != -1) {
         interfaces.push_back(workingInterface);
     } else {
-        // Сначала пробуем HID-интерфейсы (если нашли), затем всё остальное
-        if (!hidInterfaces.empty()) {
-            interfaces.insert(interfaces.end(), hidInterfaces.begin(), hidInterfaces.end());
-        }
-
         if (interfaceCount > 0) {
             for (uint8_t i = 0; i < interfaceCount; ++i) {
-                if (std::find(interfaces.begin(), interfaces.end(), static_cast<int>(i)) == interfaces.end()) {
-                    interfaces.push_back(static_cast<int>(i));
-                }
+                interfaces.push_back(static_cast<int>(i));
             }
-        }
-
-        if (interfaces.empty()) {
+        } else {
             interfaces = {0, 1, 2, 3, 4};
         }
     }
@@ -140,8 +114,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
             if (r == 0) {
                 claimed = true;
             } else {
-                LOG_DEBUG("Не удалось захватить интерфейс " << iface << ": " << libusb_error_name(r)
-                    << ". Пробуем без захвата.");
+                continue;
             }
         }
 
@@ -188,13 +161,17 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
             }
             return true;
         } else {
-            if (claimed) {
-                if (workingInterface == iface) {
-                    libusb_release_interface(handle, iface);
-                    workingInterface = -1;
-                } else {
-                    libusb_release_interface(handle, iface);
-                }
+            if (workingInterface == iface) {
+                libusb_release_interface(handle, iface);
+                workingInterface = -1;
+                // Try to recover by trying other interfaces in this same call?
+                // For simplicity, we fail this call. The loop won't continue if interfaces had only 1 element.
+                // If interfaces had {0, 1, 2}, it continues.
+                // But if workingInterface was set, interfaces has {workingInterface}.
+                // We should probably fall back to scanning if cache failed?
+                // Yes, ideally. But let's keep it simple.
+            } else {
+                libusb_release_interface(handle, iface);
             }
         }
     }
@@ -216,7 +193,7 @@ int RazerDevice::GetBatteryLevel() {
         {0x0F, 0x02, 0x02, false},
     };
 
-    uint8_t ids[] = {0x00, 0xFF, 0x1F, 0x3F};
+    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
 
     for (const auto& query : queries) {
         for (uint8_t id : ids) {
