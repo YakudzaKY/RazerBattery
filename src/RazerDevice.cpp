@@ -7,6 +7,93 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <array>
+
+namespace {
+uint8_t GetPreferredTransactionIdForPid(int pid) {
+    switch (pid) {
+    case USB_DEVICE_ID_RAZER_LANCEHEAD_WIRED:
+    case USB_DEVICE_ID_RAZER_LANCEHEAD_WIRELESS:
+    case USB_DEVICE_ID_RAZER_MAMBA_WIRELESS_RECEIVER:
+    case USB_DEVICE_ID_RAZER_MAMBA_WIRELESS_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V2_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V2_PRO_WIRELESS:
+        return 0x3F;
+
+    case USB_DEVICE_ID_RAZER_NAGA_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_NAGA_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_BASILISK_ULTIMATE_RECEIVER:
+    case USB_DEVICE_ID_RAZER_BASILISK_ULTIMATE_WIRED:
+    case USB_DEVICE_ID_RAZER_LANCEHEAD_WIRELESS_RECEIVER:
+    case USB_DEVICE_ID_RAZER_LANCEHEAD_WIRELESS_WIRED:
+    case USB_DEVICE_ID_RAZER_ATHERIS_RECEIVER:
+    case USB_DEVICE_ID_RAZER_OROCHI_V2_RECEIVER:
+    case USB_DEVICE_ID_RAZER_OROCHI_V2_BLUETOOTH:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_RECEIVER:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V2_X_HYPERSPEED:
+    case USB_DEVICE_ID_RAZER_VIPER_V2_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_VIPER_V2_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_VIPER_MINI_SE_WIRED:
+    case USB_DEVICE_ID_RAZER_VIPER_MINI_SE_WIRELESS:
+    case USB_DEVICE_ID_RAZER_COBRA_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_COBRA_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS_ALT:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED_ALT:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRELESS:
+    case USB_DEVICE_ID_RAZER_HYPERPOLLING_WIRELESS_DONGLE:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_35K:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_35K_WIRED:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_35K_WIRELESS:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_35K_PHANTOM_GREEN_EDITION_WIRED:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_PRO_35K_PHANTOM_GREEN_EDITION_WIRELESS:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_MINI_RECEIVER:
+    case USB_DEVICE_ID_RAZER_NAGA_V2_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_NAGA_V2_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_NAGA_V2_HYPERSPEED_RECEIVER:
+    case USB_DEVICE_ID_RAZER_VIPER_V3_HYPERSPEED:
+    case USB_DEVICE_ID_RAZER_BASILISK_V3_X_HYPERSPEED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V4_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V4_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_VIPER_V3_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_VIPER_V3_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_V2_VERTICAL_EDITION_WIRELESS:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_V2_VERTICAL_EDITION_WIRED:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_V2_WIRED:
+    case USB_DEVICE_ID_RAZER_PRO_CLICK_V2_WIRELESS:
+        return 0x1F;
+
+    default:
+        return 0xFF;
+    }
+}
+
+std::array<uint8_t, 3> BuildTransactionIdCandidates(int pid) {
+    const uint8_t preferred = GetPreferredTransactionIdForPid(pid);
+    if (preferred == 0x1F) return {0x1F, 0x3F, 0xFF};
+    if (preferred == 0x3F) return {0x3F, 0x1F, 0xFF};
+    return {0xFF, 0x1F, 0x3F};
+}
+
+bool IsMatchingResponse(const razer_report& request, const razer_report& response) {
+    if (response.status != 0x02) {
+        return false;
+    }
+
+    // Reject stale/mismatched packets so a bogus reply doesn't become a fake battery level.
+    if (response.remaining_packets != request.remaining_packets) return false;
+    if (response.command_class != request.command_class) return false;
+    if (response.command_id.id != request.command_id.id) return false;
+    if (response.data_size != request.data_size) return false;
+
+    return true;
+}
+}
 
 RazerDevice::RazerDevice(libusb_device* device, int pid)
     : device(device), handle(nullptr), pid(pid), workingInterface(-1) {
@@ -131,7 +218,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
                 0xA1, 0x01, 0x0300, iface,
                 (unsigned char*)&response, 90, 1000);
 
-            if (transferred == 90 && response.status == 0x02) {
+            if (transferred == 90 && IsMatchingResponse(request, response)) {
                 success = true;
             }
         }
@@ -149,7 +236,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
                     0xA1, 0x01, 0x0100, iface,
                     (unsigned char*)&response, 90, 1000);
 
-                if (transferred == 90 && response.status == 0x02) {
+                if (transferred == 90 && IsMatchingResponse(request, response)) {
                     success = true;
                 }
             }
@@ -193,9 +280,14 @@ int RazerDevice::QueryBatteryLevelOnce() {
         {0x0F, 0x02, 0x02, false},
     };
 
-    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
+    const bool allowExtendedBatteryQuery = (GetType() == RazerDeviceType::Headset);
+    const auto ids = BuildTransactionIdCandidates(pid);
 
     for (const auto& query : queries) {
+        if (!allowExtendedBatteryQuery && query.commandClass == 0x0F && query.commandId == 0x02) {
+            continue;
+        }
+
         for (uint8_t id : ids) {
             razer_report request = {0};
             razer_report response = {0};
@@ -235,12 +327,18 @@ int RazerDevice::GetBatteryLevel() {
         }
     }
 
+    // User preference: treat 0% as offline to avoid false "0%" when wireless link is down.
+    if (level == 0) {
+        LOG_DEBUG("Treating 0% as offline for PID 0x" << std::hex << pid << std::dec << ".");
+        level = -1;
+    }
+
     lastBatteryLevel = level;
     return level;
 }
 
 bool RazerDevice::IsCharging() {
-    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
+    const auto ids = BuildTransactionIdCandidates(pid);
 
     for (uint8_t id : ids) {
         razer_report request = {0};
@@ -279,7 +377,7 @@ std::wstring RazerDevice::GetSerial() {
     }
 
     // Method 2: Razer Report 0x82
-    uint8_t ids[] = {0xFF, 0x1F, 0x3F};
+    const auto ids = BuildTransactionIdCandidates(pid);
 
     for (uint8_t id : ids) {
         razer_report request = {0};

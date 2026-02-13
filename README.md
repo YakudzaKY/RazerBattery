@@ -51,7 +51,7 @@ Simply double-click `build.bat`.
       cmake ..
       cmake --build . --config Release
       ```
-    - Исполняемый файл `RazerBatteryTray.exe` появится в папке `build\Release`.
+    - Исполняемый файл `RazerBatteryTray.exe` появится в папке `build`.
 
 ## Credits & Acknowledgements
 

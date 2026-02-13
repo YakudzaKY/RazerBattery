@@ -16,6 +16,15 @@ file(GLOB SOURCES "src/*.cpp")
 # Create Windows Application (WIN32 means no console window by default)
 add_executable(RazerBatteryTray WIN32 ${SOURCES})
 
+# Keep a single stable output path to avoid launching stale binaries from build root.
+set_target_properties(RazerBatteryTray PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
+)
+
 # Link Windows libraries
 target_link_libraries(RazerBatteryTray
     setupapi

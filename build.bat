@@ -56,7 +56,7 @@ REM Clean cache to avoid generator mismatches
 if exist CMakeCache.txt del CMakeCache.txt
 
 echo [INFO] Configuring CMake...
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake ..
 if %errorlevel% neq 0 (
     echo [ERROR] Configuration failed.
     pause
@@ -73,5 +73,5 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [SUCCESS] Build finished successfully.
-echo [OUTPUT] build\Release\RazerBatteryTray.exe
+echo [OUTPUT] build\RazerBatteryTray.exe
 pause
