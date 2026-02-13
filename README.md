@@ -9,7 +9,7 @@ An optimized Windows application that monitors connected Razer devices and displ
 - **Charging Status:** Indicates when a device is charging.
 - **Optimized Performance:**
   - Uses Windows Event API (`RegisterDeviceNotification`) to detect device connections/disconnections instantly without polling.
-  - Uses a low-frequency timer (every 5 minutes) to query battery levels, minimizing system overhead.
+  - Uses a low-frequency timer (every 3 minutes) to query battery levels, minimizing system overhead.
 - **Zero-Config:** Automatically detects compatible devices.
 
 ## Build Instructions (Инструкция по сборке)

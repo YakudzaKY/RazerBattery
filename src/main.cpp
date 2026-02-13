@@ -12,7 +12,7 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TIMER_UPDATE 1
 #define ID_TIMER_REENUM 2
-#define UPDATE_INTERVAL_MS 300000 // 5 minutes
+#define UPDATE_INTERVAL_MS 180000 // 3 minutes
 #define DEVICECHANGE_REENUM_DELAY_MS 1200
 
 // Globals
