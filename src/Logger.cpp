@@ -1,6 +1,5 @@
 #include "Logger.h"
 #include <iostream>
-#include <filesystem>
 #include <windows.h>
 
 Logger& Logger::Instance() {
@@ -9,6 +8,10 @@ Logger& Logger::Instance() {
 }
 
 Logger::Logger() {
+    if (!kEnableFileLogging) {
+        return;
+    }
+
     // Log to current working directory
     std::string logPath = "RazerBatteryTray.log";
 
@@ -29,6 +32,10 @@ Logger::~Logger() {
 }
 
 void Logger::Log(const std::string& level, const std::string& message) {
+    if (!kEnableFileLogging) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(logMutex);
     if (logFile.is_open()) {
         std::time_t now = std::time(nullptr);
