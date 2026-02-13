@@ -39,6 +39,7 @@ private:
     int workingInterface;
     int lastBatteryLevel = -1;
 
+    int QueryBatteryLevelOnce();
     bool SendRequest(razer_report& request, razer_report& response);
     unsigned char CalculateCRC(razer_report* report);
 };

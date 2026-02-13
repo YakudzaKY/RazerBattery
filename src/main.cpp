@@ -11,13 +11,19 @@
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TIMER_UPDATE 1
+#define ID_TIMER_REENUM 2
 #define UPDATE_INTERVAL_MS 300000 // 5 minutes
+#define DEVICECHANGE_REENUM_DELAY_MS 1200
 
 // Globals
 RazerManager g_Manager;
 std::vector<std::unique_ptr<TrayIcon>> g_Icons;
 std::unique_ptr<TrayIcon> g_PlaceholderIcon;
 HWND g_hWnd = NULL;
+
+void ScheduleDeviceRefresh(HWND hwnd) {
+    SetTimer(hwnd, ID_TIMER_REENUM, DEVICECHANGE_REENUM_DELAY_MS, NULL);
+}
 
 void UpdateUI(HWND hwnd) {
     LOG_INFO("UpdateUI called. Window Handle: " << hwnd);
@@ -88,14 +94,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (wParam == ID_TIMER_UPDATE) {
             UpdateUI(hwnd);
+        } else if (wParam == ID_TIMER_REENUM) {
+            KillTimer(hwnd, ID_TIMER_REENUM);
+            g_Manager.EnumerateDevices();
+            UpdateUI(hwnd);
         }
         break;
 
     case WM_DEVICECHANGE:
-        LOG_INFO("WM_DEVICECHANGE received.");
-        Sleep(100); // Small delay
-        g_Manager.EnumerateDevices();
-        UpdateUI(hwnd);
+        LOG_INFO("WM_DEVICECHANGE received. Event: 0x" << std::hex << wParam << std::dec);
+        if (wParam == DBT_DEVICEARRIVAL ||
+            wParam == DBT_DEVICEREMOVECOMPLETE ||
+            wParam == DBT_DEVNODES_CHANGED) {
+            ScheduleDeviceRefresh(hwnd);
+        }
         break;
 
     case WM_TRAYICON:
@@ -116,6 +128,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_DESTROY:
         LOG_INFO("WM_DESTROY. Exiting.");
+        KillTimer(hwnd, ID_TIMER_UPDATE);
+        KillTimer(hwnd, ID_TIMER_REENUM);
         PostQuitMessage(0);
         break;
 

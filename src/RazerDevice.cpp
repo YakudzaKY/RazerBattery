@@ -216,7 +216,7 @@ bool RazerDevice::SendRequest(razer_report& request, razer_report& response) {
     return false;
 }
 
-int RazerDevice::GetBatteryLevel() {
+int RazerDevice::QueryBatteryLevelOnce() {
     struct BatteryQuery {
         uint8_t commandClass;
         uint8_t commandId;
@@ -247,13 +247,33 @@ int RazerDevice::GetBatteryLevel() {
                     ? static_cast<int>(std::lround((response.arguments[1] / 255.0) * 100.0))
                     : static_cast<int>(response.arguments[1]);
 
-                lastBatteryLevel = std::clamp(level, 0, 100);
-                return lastBatteryLevel;
+                return std::clamp(level, 0, 100);
             }
         }
     }
-    lastBatteryLevel = -1;
     return -1;
+}
+
+int RazerDevice::GetBatteryLevel() {
+    int level = QueryBatteryLevelOnce();
+
+    // Some devices can report 0% or fail immediately after link-state changes
+    // until the HID path is reopened. Retry once with a hard transport reset.
+    const bool needsRecoveryRetry = (level == -1) || (level == 0 && lastBatteryLevel <= 0);
+    if (needsRecoveryRetry) {
+        LOG_DEBUG("Battery query uncertain for PID 0x" << std::hex << pid << std::dec
+            << " (level=" << level << "), forcing handle reset and retry.");
+        Close();
+        workingInterface = -1;
+
+        int retryLevel = QueryBatteryLevelOnce();
+        if (retryLevel != -1) {
+            level = retryLevel;
+        }
+    }
+
+    lastBatteryLevel = level;
+    return level;
 }
 
 bool RazerDevice::IsCharging() {
