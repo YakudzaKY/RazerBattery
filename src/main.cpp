@@ -55,9 +55,7 @@ void UpdateUI(HWND hwnd) {
         for (size_t i = 0; i < devices.size(); i++) {
             auto& dev = devices[i];
             int level = dev->GetBatteryLevel();
-            bool charging = dev->IsCharging();
-
-            if (level == -1) level = 0;
+            bool charging = (level >= 0) ? dev->IsCharging() : false;
 
             // LOG_DEBUG("Updating device " << i << ": " << level << "%");
             g_Icons[i]->Update(level, charging, dev->GetType());

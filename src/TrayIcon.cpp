@@ -47,7 +47,11 @@ void TrayIcon::Update(int batteryLevel, bool charging, RazerDeviceType type) {
     if (type == RazerDeviceType::Keyboard) typeStr = L"Keyboard";
 
     WCHAR buf[128];
-    StringCchPrintf(buf, 128, L"%s: %d%% %s", typeStr.c_str(), batteryLevel, charging ? L"(Charging)" : L"");
+    if (batteryLevel < 0) {
+        StringCchPrintf(buf, 128, L"%s: - (Offline)", typeStr.c_str());
+    } else {
+        StringCchPrintf(buf, 128, L"%s: %d%% %s", typeStr.c_str(), batteryLevel, charging ? L"(Charging)" : L"");
+    }
     StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), buf);
 
     if (!Shell_NotifyIcon(NIM_MODIFY, &nid)) {
@@ -134,16 +138,26 @@ HICON TrayIcon::CreateBatteryIcon(int level, bool charging, RazerDeviceType type
     HFONT hFontLevel = CreateFont(-9, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Arial");
     SelectObject(hdcMem, hFontLevel);
 
-    // Color: Green > 50, Yellow > 20, Red < 20. Blue if charging.
+    const bool isOffline = (level < 0);
+
+    // Color: gray if offline, green > 50, yellow > 20, red < 20. Cyan if charging.
     COLORREF color = RGB(0, 255, 0);
-    if (level < 50) color = RGB(255, 255, 0);
-    if (level < 20) color = RGB(255, 0, 0);
-    if (charging) color = RGB(0, 255, 255); // Cyan for charging
+    if (isOffline) {
+        color = RGB(160, 160, 160);
+    } else {
+        if (level < 50) color = RGB(255, 255, 0);
+        if (level < 20) color = RGB(255, 0, 0);
+        if (charging) color = RGB(0, 255, 255); // Cyan for charging
+    }
 
     SetTextColor(hdcMem, color);
     RECT rectBot = {0, h/2, w, h};
     WCHAR sLevel[8];
-    StringCchPrintf(sLevel, 8, L"%d", level);
+    if (isOffline) {
+        StringCchCopy(sLevel, ARRAYSIZE(sLevel), L"-");
+    } else {
+        StringCchPrintf(sLevel, ARRAYSIZE(sLevel), L"%d", level);
+    }
     DrawText(hdcMem, sLevel, -1, &rectBot, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     SelectObject(hdcMem, hOldFont);
