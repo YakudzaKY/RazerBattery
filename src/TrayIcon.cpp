@@ -45,6 +45,7 @@ void TrayIcon::Update(int batteryLevel, bool charging, RazerDeviceType type) {
     if (type == RazerDeviceType::Mouse) typeStr = L"Mouse";
     if (type == RazerDeviceType::Headset) typeStr = L"Headset";
     if (type == RazerDeviceType::Keyboard) typeStr = L"Keyboard";
+    if (type == RazerDeviceType::Accessory) typeStr = L"Accessory";
 
     WCHAR buf[128];
     if (batteryLevel < 0) {
@@ -113,55 +114,70 @@ HICON TrayIcon::CreateBatteryIcon(int level, bool charging, RazerDeviceType type
     HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, w, h);
     HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
 
-    // Background
+    // Background color by device type (all dark for tray readability).
+    COLORREF bgColor = RGB(12, 12, 12);
+    switch (type) {
+    case RazerDeviceType::Mouse:
+        bgColor = RGB(8, 26, 8);   // dark green
+        break;
+    case RazerDeviceType::Headset:
+        bgColor = RGB(8, 16, 30);  // dark blue
+        break;
+    case RazerDeviceType::Keyboard:
+        bgColor = RGB(28, 18, 8);  // dark amber
+        break;
+    case RazerDeviceType::Accessory:
+        bgColor = RGB(18, 10, 24); // dark violet
+        break;
+    default:
+        bgColor = RGB(12, 12, 12); // unknown
+        break;
+    }
+
+    // Fill background.
     RECT rect = {0, 0, w, h};
-    HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0)); // Black background
+    HBRUSH brush = CreateSolidBrush(bgColor);
     FillRect(hdcMem, &rect, brush);
     DeleteObject(brush);
 
     SetBkMode(hdcMem, TRANSPARENT);
 
-    // Type Letter
-    WCHAR typeChar = L'?';
-    if (type == RazerDeviceType::Mouse) typeChar = L'M';
-    if (type == RazerDeviceType::Headset) typeChar = L'H';
-    if (type == RazerDeviceType::Keyboard) typeChar = L'K';
-
-    HFONT hFontType = CreateFont(-8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Arial");
-    HFONT hOldFont = (HFONT)SelectObject(hdcMem, hFontType);
-    SetTextColor(hdcMem, RGB(200, 200, 200)); // Gray for type
-    RECT rectTop = {0, 0, w, h/2};
-    WCHAR sType[2] = {typeChar, 0};
-    DrawText(hdcMem, sType, -1, &rectTop, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    // Level Number
-    HFONT hFontLevel = CreateFont(-9, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Arial");
-    SelectObject(hdcMem, hFontLevel);
-
+    // Large centered battery number.
     const bool isOffline = (level < 0);
+    int levelFontHeight = h - 2;
+    if (isOffline || level >= 100) {
+        levelFontHeight = h - 6;
+    } else if (level >= 10) {
+        levelFontHeight = h - 4;
+    }
+    if (levelFontHeight < 8) levelFontHeight = 8;
 
-    // Color: gray if offline, green > 50, yellow > 20, red < 20. Cyan if charging.
-    COLORREF color = RGB(0, 255, 0);
+    HFONT hFontLevel = CreateFont(-levelFontHeight, 0, 0, 0, FW_HEAVY, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Arial");
+    HFONT hOldFont = (HFONT)SelectObject(hdcMem, hFontLevel);
+
+    // Palette tuned for readability in 16x16 tray icons.
+    COLORREF color = RGB(120, 255, 120);
     if (isOffline) {
-        color = RGB(160, 160, 160);
-    } else {
-        if (level < 50) color = RGB(255, 255, 0);
-        if (level < 20) color = RGB(255, 0, 0);
-        if (charging) color = RGB(0, 255, 255); // Cyan for charging
+        color = RGB(150, 150, 150);
+    } else if (charging) {
+        color = RGB(90, 220, 255);
+    } else if (level < 20) {
+        color = RGB(255, 90, 90);
+    } else if (level < 50) {
+        color = RGB(255, 220, 90);
     }
 
     SetTextColor(hdcMem, color);
-    RECT rectBot = {0, h/2, w, h};
     WCHAR sLevel[8];
     if (isOffline) {
         StringCchCopy(sLevel, ARRAYSIZE(sLevel), L"-");
     } else {
         StringCchPrintf(sLevel, ARRAYSIZE(sLevel), L"%d", level);
     }
-    DrawText(hdcMem, sLevel, -1, &rectBot, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    RECT rectLevel = {0, 1, w, h + 1};
+    DrawText(hdcMem, sLevel, -1, &rectLevel, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     SelectObject(hdcMem, hOldFont);
-    DeleteObject(hFontType);
     DeleteObject(hFontLevel);
 
     // Create Icon
