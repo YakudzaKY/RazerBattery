@@ -1,63 +1,100 @@
 # Razer Battery Tray
 
-An optimized Windows application that monitors connected Razer devices and displays their battery status and type in the system tray.
+Native C++ Windows tray application that reads battery state from Razer USB HID devices (via `libusb`) and shows one tray icon per device.
 
-## Features
+## Current Behavior
 
-- **Multi-Device Support:** Displays a separate tray icon for each connected Razer device.
-- **Dynamic Icons:** Icons update dynamically to show device type (e.g., 'M' for Mouse, 'K' for Keyboard, 'H' for Headset) and battery percentage.
-- **Charging Status:** Indicates when a device is charging.
-- **Optimized Performance:**
-  - Uses Windows Event API (`RegisterDeviceNotification`) to detect device connections/disconnections instantly without polling.
-  - Uses a low-frequency timer (every 3 minutes) to query battery levels, minimizing system overhead.
-- **Zero-Config:** Automatically detects compatible devices.
+- **Multi-device UI:** Separate tray icon for each detected Razer device.
+- **Placeholder mode:** If no supported devices are detected, a `No` tray icon is shown with tooltip `No Razer Devices Found`.
+- **Battery rendering:** The icon shows a large battery number (`0-100`) or `-` when a device is offline/unreachable.
+- **Charging/offline state:** Tooltip includes charging/offline state (for example: `Headset: 42% (Charging)` or `Mouse: - (Offline)`).
+- **Type-aware background colors (tray readability):**
+  - Mouse: dark green
+  - Headset: dark blue
+  - Keyboard: dark amber
+  - Accessory: dark violet
+- **Level/state text colors:**
+  - Green: normal
+  - Yellow: below 50%
+  - Red: below 20%
+  - Cyan: charging
+  - Gray: offline
 
-## Build Instructions (Инструкция по сборке)
+## Performance Strategy
 
-This project uses CMake. You need **CMake** and a C++ compiler (like **Visual Studio** or **MinGW**) installed on Windows.
+- Battery refresh timer is **3 minutes** (`UPDATE_INTERVAL_MS = 180000`).
+- Device hotplug is handled with `RegisterDeviceNotification` + `WM_DEVICECHANGE`.
+- Re-enumeration after device-change events is delayed/debounced by **1200 ms**.
+- No high-frequency polling loop.
+
+## Protocol Notes (Implementation)
+
+- Main battery query: command class/id `0x07 / 0x80`.
+- Headset-specific fallback query: `0x0F / 0x02` (used for some models).
+- Charging status query: `0x07 / 0x84`.
+- Transaction IDs are tried by PID preference across `0x1F`, `0x3F`, `0xFF`.
+- Transport fallback is implemented:
+  - Feature report path first.
+  - Output+Input report path second.
+- `0%` is currently treated as offline (`-`) to avoid false zero reports after link-state changes.
+
+## Build Requirements
+
+- Windows x64
+- CMake 3.10+
+- Visual Studio with C++ workload (MSVC)
+
+Note: current `CMakeLists.txt` links directly to:
+`libusb/VS2022/MS64/static/libusb-1.0.lib`
+So MinGW is not configured out of the box.
+
+## Build
 
 ### Quick Build (Windows)
 
-Simply double-click `build.bat`.
+Run `build.bat`.
 
 ### Manual Build
 
-1.  Create a build directory:
-    ```bash
-    mkdir build
-    cd build
-    ```
-2.  Generate build files (for Visual Studio):
-    ```bash
-    cmake ..
-    ```
-3.  Build the project:
-    ```bash
-    cmake --build . --config Release
-    ```
+```cmd
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
+```
+
+Output binary: `build\RazerBatteryTray.exe`
 
 ### Как скомпилировать (Russian)
 
-Для сборки вам понадобится **CMake** и компилятор C++ (например, **Visual Studio 2019/2022**).
+Для сборки нужен Windows x64, **CMake** и **Visual Studio с C++ workload**.
 
-1.  **Простой способ:** Запустите файл `build.bat`. Он автоматически создаст папку build и скомпилирует проект.
-2.  **Ручной способ:**
-    - Откройте командную строку (cmd или PowerShell).
-    - Перейдите в папку проекта.
-    - Выполните команды:
-      ```cmd
-      mkdir build
-      cd build
-      cmake ..
-      cmake --build . --config Release
-      ```
-    - Исполняемый файл `RazerBatteryTray.exe` появится в папке `build`.
+1. Простой способ: запустить `build.bat`.
+2. Ручной способ:
+   ```cmd
+   mkdir build
+   cd build
+   cmake ..
+   cmake --build . --config Release
+   ```
+3. Файл приложения: `build\RazerBatteryTray.exe`.
 
-## Credits & Acknowledgements
+## Runtime Notes
 
-- **OpenRazer:** The `driver/` directory in this repository contains source code from the [OpenRazer](https://github.com/openrazer/openrazer) project. It is included here solely as a reference for reverse-engineering the Razer HID protocol. This application is a clean-room implementation of the Windows-side logic based on those protocol details.
+- Приложение работает в фоне через скрытое окно сообщений и иконки в трее.
+- Включена защита от запуска второй копии (`Global\RazerBatteryTray_Instance_Mutex`).
+- Выход: правый клик по иконке в трее -> `Exit`.
+
+## Device ID Source
+
+- `include/DeviceIds.h` auto-generated from OpenRazer headers using `generate_ids.py`.
+- `driver/` is reference material only. Do not compile or link it into this app.
+
+## Credits
+
+- OpenRazer protocol reference: [https://github.com/openrazer/openrazer](https://github.com/openrazer/openrazer)
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-The `driver/` content belongs to the OpenRazer project and is licensed under the GPL-2.0.
+- `driver/` content belongs to the OpenRazer project (GPL-2.0).
+- This repository currently has no top-level `LICENSE` file for the app's own source files.
