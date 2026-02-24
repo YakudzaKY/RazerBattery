@@ -65,25 +65,11 @@ cmake --build . --config Release
 
 Output binary: `build\RazerBatteryTray.exe`
 
-### Как скомпилировать (Russian)
-
-Для сборки нужен Windows x64, **CMake** и **Visual Studio с C++ workload**.
-
-1. Простой способ: запустить `build.bat`.
-2. Ручной способ:
-   ```cmd
-   mkdir build
-   cd build
-   cmake ..
-   cmake --build . --config Release
-   ```
-3. Файл приложения: `build\RazerBatteryTray.exe`.
-
 ## Runtime Notes
 
-- Приложение работает в фоне через скрытое окно сообщений и иконки в трее.
-- Включена защита от запуска второй копии (`Global\RazerBatteryTray_Instance_Mutex`).
-- Выход: правый клик по иконке в трее -> `Exit`.
+- The app runs in the background via a hidden message window and tray icons.
+- Single-instance protection is enabled (`Global\RazerBatteryTray_Instance_Mutex`).
+- Exit flow: right-click a tray icon and select `Exit`.
 
 ## Device ID Source
 
