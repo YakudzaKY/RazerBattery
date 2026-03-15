@@ -1,339 +1,218 @@
 #include "AsusDevice.h"
+#include "DeviceIds.h"
+#include "AsusProtocol.h"
 #include "Logger.h"
+
+#include <windows.h>
+#include <setupapi.h>
+#include <hidsdi.h>
+
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
-#include <filesystem>
-#include <fstream>
+#include <cwctype>
 #include <iomanip>
 #include <libusb.h>
 #include <sstream>
 #include <vector>
 
 namespace {
-namespace fs = std::filesystem;
-
-const fs::path kAsusKbMsDataIni = R"(C:\ProgramData\ASUS\ARMOURY CRATE Diagnosis\ACPeripheralData\ACKbMsData.ini)";
-const fs::path kAsusFrameworkRoot = R"(C:\ProgramData\ASUS\ARMOURY CRATE Diagnosis\Framework)";
 constexpr std::chrono::seconds kPowerRefreshInterval(2);
-constexpr std::uintmax_t kMaxServiceLogTailBytes = 128 * 1024;
+constexpr DWORD kHidWriteTimeoutMs = 1000;
+constexpr DWORD kHidReadTimeoutMs = 1500;
 
-std::string Trim(std::string value) {
-    const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), notSpace));
-    value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
+std::wstring ToLowerWide(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(::towlower(ch)); });
+    return value;
+}
 
-    if (value.size() >= 3 &&
-        static_cast<unsigned char>(value[0]) == 0xEF &&
-        static_cast<unsigned char>(value[1]) == 0xBB &&
-        static_cast<unsigned char>(value[2]) == 0xBF) {
-        value.erase(0, 3);
+std::string WideToUtf8(const std::wstring& input) {
+    if (input.empty()) {
+        return {};
     }
 
-    return value;
+    const int size = WideCharToMultiByte(
+        CP_UTF8, 0, input.c_str(), static_cast<int>(input.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
+        return {};
+    }
+
+    std::string output(static_cast<size_t>(size), '\0');
+    WideCharToMultiByte(
+        CP_UTF8, 0, input.c_str(), static_cast<int>(input.size()), output.data(), size, nullptr, nullptr);
+    return output;
 }
 
-std::string ToUpperAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return value;
+std::string ReadWideString(HANDLE handle, BOOLEAN(__stdcall* reader)(HANDLE, PVOID, ULONG)) {
+    wchar_t buffer[256] = {};
+    if (!reader(handle, buffer, static_cast<ULONG>(std::size(buffer)))) {
+        return {};
+    }
+
+    return WideToUtf8(buffer);
 }
 
-std::string MakeAsusVidPid(int pid) {
+std::string HexDump(const unsigned char* data, size_t size) {
     std::ostringstream oss;
-    oss << "0B05" << std::uppercase << std::hex << std::setw(4) << std::setfill('0') << pid;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < size; ++i) {
+        if (i != 0) {
+            oss << ' ';
+        }
+        oss << std::setw(2) << static_cast<int>(data[i]);
+    }
     return oss.str();
 }
 
-bool MatchesAsusPidToken(const std::string& rawToken, const std::string& targetVidPid) {
-    std::stringstream ss(rawToken);
-    std::string token;
-    const std::string targetPid = targetVidPid.size() >= 4 ? targetVidPid.substr(targetVidPid.size() - 4) : targetVidPid;
-
-    while (std::getline(ss, token, ',')) {
-        token = ToUpperAscii(Trim(token));
-        if (token.empty()) continue;
-        if (token == targetVidPid) return true;
-        if (token.size() == 4 && token == targetPid) return true;
-        if (token.size() == 8 && token.substr(4) == targetPid) return true;
-    }
-
-    return false;
-}
-
-DeviceType ParseAsusDeviceType(const std::string& rawType) {
-    const std::string type = ToUpperAscii(Trim(rawType));
-    if (type == "MOUSE") return DeviceType::Mouse;
-    if (type == "KEYBOARD") return DeviceType::Keyboard;
-    if (type == "HEADSET") return DeviceType::Headset;
-    if (type == "ACCESSORY") return DeviceType::Accessory;
-    return DeviceType::Unknown;
-}
-
-bool GetFallbackAsusDeviceInfo(int pid, std::string& name, DeviceType& type, std::string& modelNumber) {
+bool SupportsDirectBatteryQuery(int pid) {
     switch (pid) {
-    case 0x18F4:
-    case 0x1977:
-    case 0x1979:
-        name = "ROG SPATHA X";
-        type = DeviceType::Mouse;
-        modelNumber = "6521";
+    case USB_DEVICE_ID_ASUS_SPATHA_X:
+    case USB_DEVICE_ID_ASUS_SPATHA_X_WIRED:
+    case USB_DEVICE_ID_ASUS_SPATHA_X_WIRELESS:
         return true;
     default:
         return false;
     }
 }
 
-bool TryReadAsusMetadata(const fs::path& iniPath, int pid, std::string& name, DeviceType& type,
-    std::string& modelNumber, std::string& sectionName) {
-    std::ifstream file(iniPath);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    const std::string targetVidPid = MakeAsusVidPid(pid);
-    std::string currentSection;
-    std::string currentPid;
-    std::string currentName;
-    std::string currentModelNumber;
-    DeviceType currentType = DeviceType::Unknown;
-
-    const auto flushSection = [&]() {
-        if (!currentSection.empty() &&
-            !currentName.empty() &&
-            currentType != DeviceType::Unknown &&
-            MatchesAsusPidToken(currentPid, targetVidPid)) {
-            name = currentName;
-            type = currentType;
-            modelNumber = currentModelNumber;
-            sectionName = currentSection;
-            return true;
-        }
-        return false;
-    };
-
-    std::string line;
-    while (std::getline(file, line)) {
-        line = Trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#') {
-            continue;
-        }
-
-        if (line.front() == '[' && line.back() == ']') {
-            if (flushSection()) {
-                return true;
-            }
-
-            currentSection = line.substr(1, line.size() - 2);
-            currentPid.clear();
-            currentName.clear();
-            currentModelNumber.clear();
-            currentType = DeviceType::Unknown;
-            continue;
-        }
-
-        const size_t separator = line.find('=');
-        if (separator == std::string::npos) {
-            continue;
-        }
-
-        const std::string key = ToUpperAscii(Trim(line.substr(0, separator)));
-        const std::string value = Trim(line.substr(separator + 1));
-
-        if (key == "PID") {
-            currentPid = value;
-        } else if (key == "NAME") {
-            currentName = value;
-        } else if (key == "DEVICEID") {
-            currentModelNumber = value;
-        } else if (key == "DEVICETYPE") {
-            currentType = ParseAsusDeviceType(value);
-        }
-    }
-
-    return flushSection();
-}
-
-fs::path FindLatestAsusServiceLog() {
-    std::error_code ec;
-    if (!fs::exists(kAsusFrameworkRoot, ec)) {
-        return {};
-    }
-
-    fs::path bestPath;
-    fs::file_time_type bestWriteTime = (fs::file_time_type::min)();
-
-    for (fs::recursive_directory_iterator it(kAsusFrameworkRoot, fs::directory_options::skip_permission_denied, ec), end;
-         it != end; it.increment(ec)) {
-        if (ec) {
-            continue;
-        }
-
-        if (!it->is_regular_file(ec)) {
-            continue;
-        }
-
-        const fs::path& path = it->path();
-        const std::string filename = path.filename().string();
-        if (filename.rfind("Service.", 0) != 0 || path.extension() != ".log") {
-            continue;
-        }
-
-        const auto writeTime = it->last_write_time(ec);
-        if (ec) {
-            continue;
-        }
-
-        if (bestPath.empty() || writeTime > bestWriteTime) {
-            bestWriteTime = writeTime;
-            bestPath = path;
-        }
-    }
-
-    return bestPath;
-}
-
-std::string ReadFileTail(const fs::path& path, std::uintmax_t maxBytes) {
-    std::error_code ec;
-    const auto size = fs::file_size(path, ec);
-    if (ec) {
-        return {};
-    }
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        return {};
-    }
-
-    const std::uintmax_t bytesToRead = (std::min)(size, maxBytes);
-    const auto startOffset = static_cast<std::streamoff>(size - bytesToRead);
-    file.seekg(startOffset, std::ios::beg);
-
-    std::string data(static_cast<size_t>(bytesToRead), '\0');
-    file.read(data.data(), static_cast<std::streamsize>(bytesToRead));
-    data.resize(static_cast<size_t>(file.gcount()));
-    return data;
-}
-
-bool TryExtractIntField(const std::string& text, const std::string& key, int& value) {
-    const size_t keyPos = text.find(key);
-    if (keyPos == std::string::npos) {
-        return false;
-    }
-
-    size_t pos = keyPos + key.size();
-    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
-        ++pos;
-    }
-
-    size_t end = pos;
-    while (end < text.size() && std::isdigit(static_cast<unsigned char>(text[end]))) {
-        ++end;
-    }
-
-    if (end == pos) {
-        return false;
-    }
-
-    value = std::stoi(text.substr(pos, end - pos));
-    return true;
-}
-
-bool TryExtractBoolField(const std::string& text, const std::string& key, bool& value) {
-    const size_t keyPos = text.find(key);
-    if (keyPos == std::string::npos) {
-        return false;
-    }
-
-    size_t pos = keyPos + key.size();
-    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
-        ++pos;
-    }
-
-    if (text.compare(pos, 4, "true") == 0) {
-        value = true;
+bool GetFallbackAsusDeviceInfo(int pid, std::string& name, DeviceType& type) {
+    if (SupportsDirectBatteryQuery(pid)) {
+        name = "ROG SPATHA X";
+        type = DeviceType::Mouse;
         return true;
     }
-    if (text.compare(pos, 5, "false") == 0) {
-        value = false;
-        return true;
-    }
-
     return false;
 }
 
-bool TryReadLatestPowerState(const std::string& modelName, const std::string& modelNumber,
-    int& batteryLevel, bool& charging) {
-    const fs::path logPath = FindLatestAsusServiceLog();
-    if (logPath.empty()) {
+bool QueryHidCaps(HANDLE handle, HIDP_CAPS& caps) {
+    PHIDP_PREPARSED_DATA preparsed = nullptr;
+    if (!HidD_GetPreparsedData(handle, &preparsed)) {
         return false;
     }
 
-    const std::string tail = ReadFileTail(logPath, kMaxServiceLogTailBytes);
-    if (tail.empty()) {
+    const NTSTATUS status = HidP_GetCaps(preparsed, &caps);
+    HidD_FreePreparsedData(preparsed);
+    return status == HIDP_STATUS_SUCCESS;
+}
+
+bool FindAsusBatteryHidPath(int pid, std::wstring& path) {
+    GUID hidGuid;
+    HidD_GetHidGuid(&hidGuid);
+
+    HDEVINFO devInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devInfo == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    std::vector<std::string> needles;
-    if (!modelNumber.empty()) {
-        needles.push_back("\"modelNumber\": \"" + modelNumber + "\"");
-        needles.push_back("\"pid\": \"" + modelNumber + "\"");
-    }
-    if (!modelName.empty()) {
-        needles.push_back("\"modelName\": \"" + modelName + "\"");
-    }
+    const std::wstring pidNeedle = L"vid_0b05&pid_" + [] (int pidValue) {
+        std::wostringstream oss;
+        oss << std::hex << std::setw(4) << std::setfill(L'0') << std::nouppercase << pidValue;
+        return oss.str();
+    }(pid);
 
-    for (const std::string& needle : needles) {
-        size_t searchPos = tail.size();
+    SP_DEVICE_INTERFACE_DATA interfaceData = {};
+    interfaceData.cbSize = sizeof(interfaceData);
 
-        while (true) {
-            const size_t pos = tail.rfind(needle, searchPos);
-            if (pos == std::string::npos) {
-                break;
-            }
-
-            const size_t windowStart = pos > 128 ? pos - 128 : 0;
-            const size_t windowEnd = (std::min)(tail.size(), pos + static_cast<size_t>(384));
-            const std::string window = tail.substr(windowStart, windowEnd - windowStart);
-
-            const bool matchesName = modelName.empty() ||
-                window.find("\"modelName\": \"" + modelName + "\"") != std::string::npos;
-            const bool matchesModelNumber = modelNumber.empty() ||
-                window.find("\"modelNumber\": \"" + modelNumber + "\"") != std::string::npos ||
-                window.find("\"pid\": \"" + modelNumber + "\"") != std::string::npos;
-
-            int parsedBattery = -1;
-            bool parsedCharging = false;
-
-            if (matchesName &&
-                matchesModelNumber &&
-                TryExtractIntField(window, "\"powerStatus\":", parsedBattery) &&
-                TryExtractBoolField(window, "\"isCharging\":", parsedCharging)) {
-                batteryLevel = std::clamp(parsedBattery, 0, 100);
-                charging = parsedCharging;
-                return true;
-            }
-
-            if (pos == 0) {
-                break;
-            }
-
-            searchPos = pos - 1;
+    bool found = false;
+    for (DWORD index = 0; SetupDiEnumDeviceInterfaces(devInfo, nullptr, &hidGuid, index, &interfaceData); ++index) {
+        DWORD requiredSize = 0;
+        SetupDiGetDeviceInterfaceDetailW(devInfo, &interfaceData, nullptr, 0, &requiredSize, nullptr);
+        if (requiredSize == 0) {
+            continue;
         }
+
+        std::vector<unsigned char> detailBuffer(requiredSize, 0);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuffer.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+        if (!SetupDiGetDeviceInterfaceDetailW(devInfo, &interfaceData, detail, requiredSize, nullptr, nullptr)) {
+            continue;
+        }
+
+        const std::wstring candidatePath = detail->DevicePath;
+        const std::wstring loweredPath = ToLowerWide(candidatePath);
+        if (loweredPath.find(pidNeedle) == std::wstring::npos ||
+            loweredPath.find(L"mi_00") == std::wstring::npos) {
+            continue;
+        }
+
+        HANDLE handle = CreateFileW(
+            candidatePath.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+
+        HIDP_CAPS caps = {};
+        const bool matchesCaps = QueryHidCaps(handle, caps) &&
+            caps.UsagePage == 0xff01 &&
+            caps.Usage == 0x01 &&
+            caps.InputReportByteLength == 65 &&
+            caps.OutputReportByteLength == 65;
+        CloseHandle(handle);
+
+        if (!matchesCaps) {
+            continue;
+        }
+
+        path = candidatePath;
+        found = true;
+        break;
     }
 
-    return false;
+    SetupDiDestroyDeviceInfoList(devInfo);
+    return found;
+}
+
+bool TransferHidReport(HANDLE handle, bool write, unsigned char* buffer, DWORD length, DWORD timeoutMs, DWORD& transferred) {
+    transferred = 0;
+
+    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (event == nullptr) {
+        return false;
+    }
+
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = event;
+
+    const BOOL issued = write
+        ? WriteFile(handle, buffer, length, &transferred, &overlapped)
+        : ReadFile(handle, buffer, length, &transferred, &overlapped);
+
+    if (!issued && GetLastError() != ERROR_IO_PENDING) {
+        CloseHandle(event);
+        return false;
+    }
+
+    const DWORD waitResult = WaitForSingleObject(event, timeoutMs);
+    if (waitResult != WAIT_OBJECT_0) {
+        CancelIoEx(handle, &overlapped);
+        CloseHandle(event);
+        return false;
+    }
+
+    const BOOL completed = GetOverlappedResult(handle, &overlapped, &transferred, FALSE);
+    CloseHandle(event);
+    return completed == TRUE;
 }
 }
 
 AsusDevice::AsusDevice(libusb_device* device, int pid)
     : device(device),
-      handle(nullptr),
       pid(pid),
       cachedType(DeviceType::Unknown),
       lastBatteryLevel(-1),
       lastCharging(false),
       metadataResolved(false),
+      hidPathResolved(false),
+      hidHandle(INVALID_HANDLE_VALUE),
       lastPowerRefresh((std::chrono::steady_clock::time_point::min)()) {
     if (device) {
         libusb_ref_device(device);
@@ -349,14 +228,12 @@ AsusDevice::~AsusDevice() {
 }
 
 bool AsusDevice::Open() {
-    return RefreshMetadata();
+    RefreshMetadata();
+    return EnsureHidOpen() || cachedType != DeviceType::Unknown;
 }
 
 void AsusDevice::Close() {
-    if (handle) {
-        libusb_close(handle);
-        handle = nullptr;
-    }
+    ResetHid();
 }
 
 int AsusDevice::getBatteryLevel() {
@@ -392,12 +269,102 @@ bool AsusDevice::RefreshMetadata() {
     }
 
     metadataResolved = true;
+    return GetFallbackAsusDeviceInfo(pid, cachedName, cachedType);
+}
 
-    if (TryReadAsusMetadata(kAsusKbMsDataIni, pid, cachedName, cachedType, cachedModelNumber, cachedSectionName)) {
+bool AsusDevice::EnsureHidOpen() {
+    if (!SupportsDirectBatteryQuery(pid)) {
+        return false;
+    }
+
+    if (hidHandle != INVALID_HANDLE_VALUE) {
         return true;
     }
 
-    return GetFallbackAsusDeviceInfo(pid, cachedName, cachedType, cachedModelNumber);
+    if (!hidPathResolved) {
+        hidPathResolved = true;
+        FindAsusBatteryHidPath(pid, hidPath);
+        if (hidPath.empty()) {
+            return false;
+        }
+    }
+
+    hidHandle = CreateFileW(
+        hidPath.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+        nullptr);
+    if (hidHandle == INVALID_HANDLE_VALUE) {
+        LOG_DEBUG("ASUS HID open failed for PID 0x" << std::hex << pid << std::dec
+            << " path=" << WideToUtf8(hidPath) << " error=" << GetLastError());
+        return false;
+    }
+
+    if (cachedName.empty() || cachedName == "ASUS Peripheral") {
+        const std::string productName = ReadWideString(hidHandle, HidD_GetProductString);
+        if (!productName.empty()) {
+            cachedName = productName;
+        }
+    }
+
+    LOG_DEBUG("Opened ASUS HID path for PID 0x" << std::hex << pid << std::dec
+        << ": " << WideToUtf8(hidPath));
+    return true;
+}
+
+void AsusDevice::ResetHid() {
+    if (hidHandle != INVALID_HANDLE_VALUE) {
+        CloseHandle(hidHandle);
+        hidHandle = INVALID_HANDLE_VALUE;
+    }
+}
+
+bool AsusDevice::TryReadDirectPowerState(int& batteryLevel, bool& charging) {
+    if (!SupportsDirectBatteryQuery(pid)) {
+        return false;
+    }
+
+    if (!EnsureHidOpen()) {
+        return false;
+    }
+
+    std::array<unsigned char, 65> query = {};
+    const auto batteryQuery = BuildSpathaBatteryQuery();
+    std::copy(batteryQuery.begin(), batteryQuery.end(), query.begin());
+
+    std::array<unsigned char, 65> response = {};
+    DWORD bytesTransferred = 0;
+
+    if (!TransferHidReport(hidHandle, true, query.data(), static_cast<DWORD>(query.size()), kHidWriteTimeoutMs, bytesTransferred) ||
+        bytesTransferred != query.size()) {
+        LOG_DEBUG("ASUS battery write failed for PID 0x" << std::hex << pid << std::dec);
+        return false;
+    }
+
+    if (!TransferHidReport(hidHandle, false, response.data(), static_cast<DWORD>(response.size()), kHidReadTimeoutMs, bytesTransferred) ||
+        bytesTransferred != response.size()) {
+        LOG_DEBUG("ASUS battery read failed for PID 0x" << std::hex << pid << std::dec);
+        return false;
+    }
+
+    AsusBatteryState state;
+    if (!ParseSpathaBatteryResponse(response.data(), response.size(), state)) {
+        LOG_DEBUG("Unexpected ASUS battery response for PID 0x" << std::hex << pid << std::dec
+            << ": " << HexDump(response.data(), 10));
+        return false;
+    }
+
+    batteryLevel = state.batteryLevel;
+    charging = state.charging;
+    LOG_DEBUG("ASUS battery response PID 0x" << std::hex << pid << std::dec
+        << " level=" << batteryLevel
+        << " raw_status=0x" << std::hex << static_cast<int>(state.rawStatus) << std::dec
+        << " voltage=" << state.voltageMv
+        << " charging=" << (charging ? "true" : "false"));
+    return true;
 }
 
 void AsusDevice::RefreshPowerState(bool force) {
@@ -416,8 +383,16 @@ void AsusDevice::RefreshPowerState(bool force) {
 
     int batteryLevel = -1;
     bool charging = false;
-    if (TryReadLatestPowerState(cachedName, cachedModelNumber, batteryLevel, charging)) {
+    if (TryReadDirectPowerState(batteryLevel, charging)) {
         lastBatteryLevel = batteryLevel;
         lastCharging = charging;
+        return;
+    }
+
+    ResetHid();
+    if (TryReadDirectPowerState(batteryLevel, charging)) {
+        lastBatteryLevel = batteryLevel;
+        lastCharging = charging;
+        return;
     }
 }

@@ -780,6 +780,8 @@
 // Asus
 #define USB_VENDOR_ID_ASUS 0x0b05
 #define USB_DEVICE_ID_ASUS_SPATHA_X 0x18f4
+#define USB_DEVICE_ID_ASUS_SPATHA_X_WIRED 0x1977
+#define USB_DEVICE_ID_ASUS_SPATHA_X_WIRELESS 0x1979
 
 #include <map>
 #include "IDevice.h"

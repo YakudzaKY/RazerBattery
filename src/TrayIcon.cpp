@@ -2,8 +2,42 @@
 #include <tchar.h>
 #include <strsafe.h>
 #include "Logger.h"
+#include <string>
 
 #define WM_TRAYICON (WM_USER + 1)
+
+namespace {
+std::wstring Utf8ToWide(const char* value) {
+    if (value == nullptr || value[0] == '\0') {
+        return {};
+    }
+
+    const int size = MultiByteToWideChar(CP_UTF8, 0, value, -1, nullptr, 0);
+    if (size <= 1) {
+        return {};
+    }
+
+    std::wstring result(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value, -1, result.data(), size);
+    result.resize(static_cast<size_t>(size - 1));
+    return result;
+}
+
+std::wstring GetTypeLabel(DeviceType type) {
+    switch (type) {
+    case DeviceType::Mouse:
+        return L"Mouse";
+    case DeviceType::Headset:
+        return L"Headset";
+    case DeviceType::Keyboard:
+        return L"Keyboard";
+    case DeviceType::Accessory:
+        return L"Accessory";
+    default:
+        return L"Device";
+    }
+}
+}
 
 TrayIcon::TrayIcon(HWND hwnd, UINT id) : hwnd(hwnd), id(id) {
     memset(&nid, 0, sizeof(nid));
@@ -25,7 +59,7 @@ void TrayIcon::Remove() {
 void TrayIcon::UpdatePlaceholder() {
     HICON hIcon = CreatePlaceholderIcon();
     nid.hIcon = hIcon;
-    StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), L"No Razer Devices Found");
+    StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), L"No Supported Devices Found");
 
     // Try to modify first, if fails, add
     if (!Shell_NotifyIcon(NIM_MODIFY, &nid)) {
@@ -37,21 +71,20 @@ void TrayIcon::UpdatePlaceholder() {
     DestroyIcon(hIcon);
 }
 
-void TrayIcon::Update(int batteryLevel, bool charging, DeviceType type) {
+void TrayIcon::Update(int batteryLevel, bool charging, DeviceType type, const char* deviceName) {
     HICON hIcon = CreateBatteryIcon(batteryLevel, charging, type);
     nid.hIcon = hIcon;
 
-    std::wstring typeStr = L"Device";
-    if (type == DeviceType::Mouse) typeStr = L"Mouse";
-    if (type == DeviceType::Headset) typeStr = L"Headset";
-    if (type == DeviceType::Keyboard) typeStr = L"Keyboard";
-    if (type == DeviceType::Accessory) typeStr = L"Accessory";
+    std::wstring displayName = Utf8ToWide(deviceName);
+    if (displayName.empty()) {
+        displayName = GetTypeLabel(type);
+    }
 
     WCHAR buf[128];
     if (batteryLevel < 0) {
-        StringCchPrintf(buf, 128, L"%s: - (Offline)", typeStr.c_str());
+        StringCchPrintf(buf, ARRAYSIZE(buf), L"%s: - (Offline)", displayName.c_str());
     } else {
-        StringCchPrintf(buf, 128, L"%s: %d%% %s", typeStr.c_str(), batteryLevel, charging ? L"(Charging)" : L"");
+        StringCchPrintf(buf, ARRAYSIZE(buf), L"%s: %d%% %s", displayName.c_str(), batteryLevel, charging ? L"(Charging)" : L"");
     }
     StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), buf);
 

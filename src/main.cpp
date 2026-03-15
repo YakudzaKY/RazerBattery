@@ -12,7 +12,7 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TIMER_UPDATE 1
 #define ID_TIMER_REENUM 2
-#define UPDATE_INTERVAL_MS 180000 // 3 minutes
+#define UPDATE_INTERVAL_MS 60000 // 1 minute
 #define DEVICECHANGE_REENUM_DELAY_MS 1200
 
 // Globals
@@ -58,7 +58,7 @@ void UpdateUI(HWND hwnd) {
             bool charging = (level >= 0) ? dev->isCharging() : false;
 
             // LOG_DEBUG("Updating device " << i << ": " << level << "%");
-            g_Icons[i]->Update(level, charging, dev->getDeviceType());
+            g_Icons[i]->Update(level, charging, dev->getDeviceType(), dev->getDeviceName());
         }
     }
 }

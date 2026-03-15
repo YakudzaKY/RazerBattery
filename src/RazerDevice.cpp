@@ -403,7 +403,24 @@ std::wstring RazerDevice::GetSerial() {
 
 const char* RazerDevice::getDeviceName() {
     if (cachedName.empty()) {
-        cachedName = "Razer Device"; // Placeholder
+        if (handle || Open()) {
+            libusb_device_descriptor desc = {};
+            if (libusb_get_device_descriptor(device, &desc) == 0 && desc.iProduct != 0) {
+                unsigned char buffer[256] = {};
+                const int len = libusb_get_string_descriptor_ascii(
+                    handle,
+                    desc.iProduct,
+                    buffer,
+                    static_cast<int>(sizeof(buffer) - 1));
+                if (len > 0) {
+                    cachedName.assign(reinterpret_cast<const char*>(buffer), static_cast<size_t>(len));
+                }
+            }
+        }
+
+        if (cachedName.empty()) {
+            cachedName = "Razer Device";
+        }
     }
     return cachedName.c_str();
 }

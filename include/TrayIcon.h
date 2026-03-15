@@ -8,7 +8,7 @@ public:
     TrayIcon(HWND hwnd, UINT id);
     ~TrayIcon();
 
-    void Update(int batteryLevel, bool charging, DeviceType type);
+    void Update(int batteryLevel, bool charging, DeviceType type, const char* deviceName);
     void Remove();
     void UpdatePlaceholder();
 
