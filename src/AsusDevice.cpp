@@ -369,6 +369,8 @@ bool AsusDevice::TryReadDirectPowerState(int& batteryLevel, bool& charging) {
 
 void AsusDevice::RefreshPowerState(bool force) {
     if (!RefreshMetadata()) {
+        lastBatteryLevel = -1;
+        lastCharging = false;
         return;
     }
 
@@ -395,4 +397,11 @@ void AsusDevice::RefreshPowerState(bool force) {
         lastCharging = charging;
         return;
     }
+
+    if (lastBatteryLevel != -1 || lastCharging) {
+        LOG_DEBUG("ASUS device PID 0x" << std::hex << pid << std::dec
+            << " is offline or sleeping; marking battery state unavailable.");
+    }
+    lastBatteryLevel = -1;
+    lastCharging = false;
 }
