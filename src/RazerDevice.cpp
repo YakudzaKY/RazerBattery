@@ -144,12 +144,8 @@ void RazerDevice::Close() {
     }
 }
 
-RazerDeviceType RazerDevice::GetType() const {
-    return GetRazerDeviceType(pid);
-}
-
-std::wstring RazerDevice::GetName() const {
-    return L"Razer Device"; // Placeholder
+DeviceType RazerDevice::getDeviceType() {
+    return GetDeviceType(pid);
 }
 
 unsigned char RazerDevice::CalculateCRC(razer_report* report) {
@@ -280,7 +276,7 @@ int RazerDevice::QueryBatteryLevelOnce() {
         {0x0F, 0x02, 0x02, false},
     };
 
-    const bool allowExtendedBatteryQuery = (GetType() == RazerDeviceType::Headset);
+    const bool allowExtendedBatteryQuery = (getDeviceType() == DeviceType::Headset);
     const auto ids = BuildTransactionIdCandidates(pid);
 
     for (const auto& query : queries) {
@@ -309,7 +305,7 @@ int RazerDevice::QueryBatteryLevelOnce() {
     return -1;
 }
 
-int RazerDevice::GetBatteryLevel() {
+int RazerDevice::getBatteryLevel() {
     int level = QueryBatteryLevelOnce();
 
     // Some devices can report 0% or fail immediately after link-state changes
@@ -337,7 +333,7 @@ int RazerDevice::GetBatteryLevel() {
     return level;
 }
 
-bool RazerDevice::IsCharging() {
+bool RazerDevice::isCharging() {
     const auto ids = BuildTransactionIdCandidates(pid);
 
     for (uint8_t id : ids) {
@@ -403,4 +399,11 @@ std::wstring RazerDevice::GetSerial() {
     cachedSerial = wss.str();
 
     return cachedSerial;
+}
+
+const char* RazerDevice::getDeviceName() {
+    if (cachedName.empty()) {
+        cachedName = "Razer Device"; // Placeholder
+    }
+    return cachedName.c_str();
 }

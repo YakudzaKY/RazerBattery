@@ -1,5 +1,7 @@
 #include "Logger.h"
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 #include <windows.h>
 
 Logger& Logger::Instance() {
@@ -7,8 +9,26 @@ Logger& Logger::Instance() {
     return instance;
 }
 
+bool Logger::IsEnabled() {
+    static const bool enabled = []() {
+        char value[16] = {};
+        const DWORD length = GetEnvironmentVariableA("RAZERBATTERY_LOG", value, static_cast<DWORD>(sizeof(value)));
+        if (length == 0 || length >= sizeof(value)) {
+            return false;
+        }
+
+        std::string normalized(value, length);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+        return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+    }();
+
+    return enabled;
+}
+
 Logger::Logger() {
-    if (!kEnableFileLogging) {
+    if (!IsEnabled()) {
         return;
     }
 
@@ -32,7 +52,7 @@ Logger::~Logger() {
 }
 
 void Logger::Log(const std::string& level, const std::string& message) {
-    if (!kEnableFileLogging) {
+    if (!IsEnabled()) {
         return;
     }
 

@@ -8,7 +8,7 @@ public:
     TrayIcon(HWND hwnd, UINT id);
     ~TrayIcon();
 
-    void Update(int batteryLevel, bool charging, RazerDeviceType type);
+    void Update(int batteryLevel, bool charging, DeviceType type);
     void Remove();
     void UpdatePlaceholder();
 
@@ -17,6 +17,6 @@ private:
     UINT id;
     NOTIFYICONDATA nid;
 
-    HICON CreateBatteryIcon(int level, bool charging, RazerDeviceType type);
+    HICON CreateBatteryIcon(int level, bool charging, DeviceType type);
     HICON CreatePlaceholderIcon();
 };

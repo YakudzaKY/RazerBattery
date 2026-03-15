@@ -37,15 +37,15 @@ void TrayIcon::UpdatePlaceholder() {
     DestroyIcon(hIcon);
 }
 
-void TrayIcon::Update(int batteryLevel, bool charging, RazerDeviceType type) {
+void TrayIcon::Update(int batteryLevel, bool charging, DeviceType type) {
     HICON hIcon = CreateBatteryIcon(batteryLevel, charging, type);
     nid.hIcon = hIcon;
 
     std::wstring typeStr = L"Device";
-    if (type == RazerDeviceType::Mouse) typeStr = L"Mouse";
-    if (type == RazerDeviceType::Headset) typeStr = L"Headset";
-    if (type == RazerDeviceType::Keyboard) typeStr = L"Keyboard";
-    if (type == RazerDeviceType::Accessory) typeStr = L"Accessory";
+    if (type == DeviceType::Mouse) typeStr = L"Mouse";
+    if (type == DeviceType::Headset) typeStr = L"Headset";
+    if (type == DeviceType::Keyboard) typeStr = L"Keyboard";
+    if (type == DeviceType::Accessory) typeStr = L"Accessory";
 
     WCHAR buf[128];
     if (batteryLevel < 0) {
@@ -105,7 +105,7 @@ HICON TrayIcon::CreatePlaceholderIcon() {
     return hIcon;
 }
 
-HICON TrayIcon::CreateBatteryIcon(int level, bool charging, RazerDeviceType type) {
+HICON TrayIcon::CreateBatteryIcon(int level, bool charging, DeviceType type) {
     int w = GetSystemMetrics(SM_CXSMICON);
     int h = GetSystemMetrics(SM_CYSMICON);
 
@@ -117,16 +117,16 @@ HICON TrayIcon::CreateBatteryIcon(int level, bool charging, RazerDeviceType type
     // Background color by device type (all dark for tray readability).
     COLORREF bgColor = RGB(12, 12, 12);
     switch (type) {
-    case RazerDeviceType::Mouse:
+    case DeviceType::Mouse:
         bgColor = RGB(8, 26, 8);   // dark green
         break;
-    case RazerDeviceType::Headset:
+    case DeviceType::Headset:
         bgColor = RGB(8, 16, 30);  // dark blue
         break;
-    case RazerDeviceType::Keyboard:
+    case DeviceType::Keyboard:
         bgColor = RGB(28, 18, 8);  // dark amber
         break;
-    case RazerDeviceType::Accessory:
+    case DeviceType::Accessory:
         bgColor = RGB(18, 10, 24); // dark violet
         break;
     default:

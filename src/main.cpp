@@ -6,7 +6,7 @@
 #include <hidsdi.h>
 #include "SingleInstance.h"
 #include "Logger.h"
-#include "RazerManager.h"
+#include "DeviceManager.h"
 #include "TrayIcon.h"
 
 #define WM_TRAYICON (WM_USER + 1)
@@ -16,7 +16,7 @@
 #define DEVICECHANGE_REENUM_DELAY_MS 1200
 
 // Globals
-RazerManager g_Manager;
+DeviceManager g_Manager;
 std::vector<std::unique_ptr<TrayIcon>> g_Icons;
 std::unique_ptr<TrayIcon> g_PlaceholderIcon;
 HWND g_hWnd = NULL;
@@ -54,11 +54,11 @@ void UpdateUI(HWND hwnd) {
 
         for (size_t i = 0; i < devices.size(); i++) {
             auto& dev = devices[i];
-            int level = dev->GetBatteryLevel();
-            bool charging = (level >= 0) ? dev->IsCharging() : false;
+            int level = dev->getBatteryLevel();
+            bool charging = (level >= 0) ? dev->isCharging() : false;
 
             // LOG_DEBUG("Updating device " << i << ": " << level << "%");
-            g_Icons[i]->Update(level, charging, dev->GetType());
+            g_Icons[i]->Update(level, charging, dev->getDeviceType());
         }
     }
 }
