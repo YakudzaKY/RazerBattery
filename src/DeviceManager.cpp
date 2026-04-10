@@ -6,6 +6,56 @@
 #include <map>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
+
+namespace {
+std::string ToLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+struct RazerCandidateInfo {
+    std::string logicalKey;
+    int priority;
+};
+
+RazerCandidateInfo GetRazerCandidateInfo(int pid, const char* deviceName) {
+    switch (pid) {
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED_ALT:
+        return {"razer-deathadder-v3-pro", 30};
+
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS_ALT:
+        return {"razer-deathadder-v3-pro", 20};
+
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRED:
+        return {"razer-deathadder-v3-hyperspeed", 30};
+
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRELESS:
+        return {"razer-deathadder-v3-hyperspeed", 20};
+
+    default:
+        break;
+    }
+
+    std::string name = deviceName ? deviceName : "";
+    name = ToLowerCopy(name);
+    if (!name.empty() && name != "razer device") {
+        return {name, 10};
+    }
+
+    std::ostringstream fallback;
+    fallback << "pid:0x" << std::hex << pid;
+    return {fallback.str(), 0};
+}
+
+int ScoreRazerCandidate(int batteryLevel, int priority) {
+    return (batteryLevel >= 0 ? 100 : 0) + priority;
+}
+}
 
 DeviceManager::DeviceManager() : ctx(nullptr) {
     int r = libusb_init(&ctx);
@@ -42,14 +92,12 @@ void DeviceManager::EnumerateDevices() {
         return;
     }
 
-    std::map<std::wstring, std::shared_ptr<IDevice>> existingMap;
-    for (auto& d : devices) {
-        // This is tricky because we don't know the concrete type.
-        // We'll need a way to get a unique key without calling a concrete-type method.
-        // Let's assume for now that getDeviceName() + some other property will be unique.
-        // This part needs more thought. For now, we'll just clear and re-add.
-    }
     devices.clear();
+    struct RazerSelection {
+        size_t deviceIndex;
+        int score;
+    };
+    std::map<std::string, RazerSelection> razerLogicalIndex;
 
 
     for (ssize_t i = 0; i < cnt; i++) {
@@ -74,12 +122,43 @@ void DeviceManager::EnumerateDevices() {
             }
 
             if (newDevice) {
-                devices.push_back(newDevice);
                 int batt = newDevice->getBatteryLevel();
                 if (batt != -1) {
-                        LOG_INFO("  Battery: " << batt << "%");
+                    LOG_INFO("  Battery: " << batt << "%");
                 } else {
-                        LOG_ERROR("  Battery query failed.");
+                    LOG_ERROR("  Battery query failed.");
+                }
+
+                if (desc.idVendor == 0x1532) {
+                    auto* razerDev = dynamic_cast<RazerDevice*>(newDevice.get());
+                    const char* deviceName = newDevice->getDeviceName();
+                    const RazerCandidateInfo info = GetRazerCandidateInfo(
+                        razerDev ? razerDev->GetPID() : desc.idProduct,
+                        deviceName);
+                    const int score = ScoreRazerCandidate(batt, info.priority);
+                    const auto existing = razerLogicalIndex.find(info.logicalKey);
+
+                    if (existing == razerLogicalIndex.end()) {
+                        razerLogicalIndex.emplace(info.logicalKey, RazerSelection{devices.size(), score});
+                        devices.push_back(newDevice);
+                    } else {
+                        const size_t existingIndex = existing->second.deviceIndex;
+                        const int existingScore = existing->second.score;
+
+                        if (score > existingScore) {
+                            LOG_INFO("Replacing duplicate Razer candidate [" << deviceName
+                                << ", PID: 0x" << std::hex << desc.idProduct << std::dec
+                                << "] with better transport candidate.");
+                            devices[existingIndex] = newDevice;
+                            existing->second.score = score;
+                        } else {
+                            LOG_INFO("Skipping duplicate Razer candidate [" << deviceName
+                                << ", PID: 0x" << std::hex << desc.idProduct << std::dec
+                                << "] because another transport already represents this device.");
+                        }
+                    }
+                } else {
+                    devices.push_back(newDevice);
                 }
             }
         }

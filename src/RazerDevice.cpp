@@ -10,6 +10,23 @@
 #include <array>
 
 namespace {
+const char* GetFallbackProductName(int pid) {
+    switch (pid) {
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRED_ALT:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_PRO_WIRELESS_ALT:
+        return "Razer DeathAdder V3 Pro";
+
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRED:
+    case USB_DEVICE_ID_RAZER_DEATHADDER_V3_HYPERSPEED_WIRELESS:
+        return "Razer DeathAdder V3 HyperSpeed";
+
+    default:
+        return nullptr;
+    }
+}
+
 uint8_t GetPreferredTransactionIdForPid(int pid) {
     switch (pid) {
     case USB_DEVICE_ID_RAZER_LANCEHEAD_WIRED:
@@ -346,9 +363,15 @@ bool RazerDevice::isCharging() {
         request.transaction_id.id = id;
 
         if (SendRequest(request, response)) {
-            return response.arguments[1] == 1;
+            const bool charging = response.arguments[1] == 1;
+            LOG_DEBUG("Charging status query succeeded for PID 0x" << std::hex << pid << std::dec
+                << ": raw=" << static_cast<int>(response.arguments[1])
+                << " charging=" << (charging ? "true" : "false"));
+            return charging;
         }
     }
+
+    LOG_DEBUG("Charging status query failed for PID 0x" << std::hex << pid << std::dec << ".");
     return false;
 }
 
@@ -419,7 +442,11 @@ const char* RazerDevice::getDeviceName() {
         }
 
         if (cachedName.empty()) {
-            cachedName = "Razer Device";
+            if (const char* fallbackName = GetFallbackProductName(pid)) {
+                cachedName = fallbackName;
+            } else {
+                cachedName = "Razer Device";
+            }
         }
     }
     return cachedName.c_str();
